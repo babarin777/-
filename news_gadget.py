@@ -43,22 +43,31 @@ class ScrollableFrame(tk.Frame):
 
         self.canvas.bind("<Configure>", self._on_canvas_configure)
 
-        # Bind mouse wheel
+        # Bind mouse wheel only when entering the canvas
+        self.canvas.bind("<Enter>", self._bind_mousewheel)
+        self.canvas.bind("<Leave>", self._unbind_mousewheel)
+
+    def _bind_mousewheel(self, event):
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-        # For Linux
         self.canvas.bind_all("<Button-4>", self._on_mousewheel)
         self.canvas.bind_all("<Button-5>", self._on_mousewheel)
+
+    def _unbind_mousewheel(self, event):
+        self.canvas.unbind_all("<MouseWheel>")
+        self.canvas.unbind_all("<Button-4>")
+        self.canvas.unbind_all("<Button-5>")
 
     def _on_canvas_configure(self, event):
         # Resize the scrollable window to match the canvas width
         self.canvas.itemconfig(self.canvas_window, width=event.width)
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_mousewheel(self, event):
         if event.num == 4:
             self.canvas.yview_scroll(-1, "units")
         elif event.num == 5:
             self.canvas.yview_scroll(1, "units")
-        else:
+        elif hasattr(event, 'delta'):
             self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
 class NewsGadget:
@@ -70,7 +79,7 @@ class NewsGadget:
         self.setup_fonts()
         self.setup_ui()
 
-        self.log("ガジェットを起動しました。")
+        self.log("ガジェットを起動しました。ニュースの取得を開始します...")
         self.refresh_news()
 
     def setup_fonts(self):
@@ -128,15 +137,19 @@ class NewsGadget:
         threading.Thread(target=self.fetch_all_news, daemon=True).start()
 
     def fetch_all_news(self):
-        for cat in CATEGORIES:
-            self.log(f"{cat['name']} の情報を取得しています...")
-            entries = self.get_news_entries(cat['keyword'])
-            sorted_entries = self.sort_entries(entries)
+        try:
+            for cat in CATEGORIES:
+                self.log(f"{cat['name']} の情報を取得しています...")
+                entries = self.get_news_entries(cat['keyword'])
+                self.log(f"{cat['name']}: {len(entries)}件の記事が見つかりました。")
+                sorted_entries = self.sort_entries(entries)
 
-            # Update UI on main thread
-            self.root.after(0, self.render_category, cat, sorted_entries)
+                # Update UI on main thread
+                self.root.after(0, self.render_category, cat, sorted_entries)
 
-        self.log("更新が完了しました。")
+            self.log("すべてのカテゴリの読み込み指示を出しました。")
+        except Exception as e:
+            self.log(f"致命的なエラー: {e}")
 
     def get_news_entries(self, keyword):
         encoded_keyword = requests.utils.quote(keyword)
@@ -174,8 +187,14 @@ class NewsGadget:
 
         tk.Label(frame, text=cat['name'], font=self.title_font, bg=cat['bg'], fg="#333").pack(anchor="w", padx=5)
 
-        for i, entry in enumerate(entries[:5]): # Show top 5
-            self.render_article(frame, entry, cat['bg'], i < MAX_THUMBNAILS_PER_SECTION)
+        if not entries:
+            tk.Label(frame, text="記事が見つかりませんでした。", font=self.article_font, bg=cat['bg']).pack(anchor="w", padx=10)
+        else:
+            for i, entry in enumerate(entries[:5]): # Show top 5
+                self.render_article(frame, entry, cat['bg'], i < MAX_THUMBNAILS_PER_SECTION)
+
+        # Force update scroll region
+        self.root.after(100, lambda: self.scroll_frame.canvas.configure(scrollregion=self.scroll_frame.canvas.bbox("all")))
 
     def render_article(self, parent, entry, bg, fetch_image):
         card = tk.Frame(parent, bg="white", bd=1, relief="ridge", pady=5, padx=5)
@@ -215,13 +234,17 @@ class NewsGadget:
                 img_data = Image.open(BytesIO(img_res.content))
                 img_data.thumbnail((100, 100))
 
-                # Must be PhotoImage for Tkinter
-                photo = ImageTk.PhotoImage(img_data)
-
-                # Update UI on main thread
-                self.root.after(0, self.display_thumbnail, card, photo)
+                # Process image to PhotoImage on the main thread
+                self.root.after(0, self.process_and_display_image, card, img_data)
         except:
             pass # Silently fail for images
+
+    def process_and_display_image(self, card, img_data):
+        try:
+            photo = ImageTk.PhotoImage(img_data)
+            self.display_thumbnail(card, photo)
+        except Exception as e:
+            print(f"Image processing error: {e}")
 
     def display_thumbnail(self, card, photo):
         img_label = tk.Label(card, image=photo, bg="white")
