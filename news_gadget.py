@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import ttk, messagebox
 import sys
 
 # 依存ライブラリのチェック
@@ -7,7 +7,6 @@ try:
     import feedparser
     import requests
 except ImportError:
-    # Tkinterは標準ライブラリなので使える前提
     root = tk.Tk()
     root.withdraw()
     messagebox.showerror(
@@ -15,7 +14,6 @@ except ImportError:
         "必要なライブラリ（requests, feedparser）が見つかりません。\n\n"
         "コマンドプロンプトを開き、以下のコマンドを【一文字ずつ正確に】入力して「Enter」を押してください：\n\n"
         "py -m pip install requests feedparser\n\n"
-        "※「-m」の後の「pip」を入れ忘れるとエラーになります。\n"
         "※インストール完了後、このファイルを再度実行してください。"
     )
     sys.exit(1)
@@ -26,116 +24,151 @@ from urllib.parse import quote
 
 # 1. ニュース分野と背景色の設定
 CATEGORIES = [
-    {"label": "AI関連", "q": "AI OR 人工知能", "color": "#F0F8FF"}, # AliceBlue
-    {"label": "再エネ", "q": "再生可能エネルギー", "color": "#FFF0F5"}, # LavenderBlush
-    {"label": "EV", "q": "電気自動車 OR EV", "color": "#F0FFF0"}    # Honeydew
+    {"label": "AI関連", "q": "AI OR 人工知能 OR 生成AI", "color": "#F0F8FF"}, # AliceBlue
+    {"label": "再エネ", "q": "再生可能エネルギー OR 再エネ OR 太陽光 OR 風力", "color": "#FFF0F5"}, # LavenderBlush
+    {"label": "EV", "q": "電気自動車 OR EV OR テスラ OR 自動運転", "color": "#F0FFF0"}    # Honeydew
 ]
 
-class SimpleNewsGadget:
+MAIN_FONT = ("Meiryo UI", 10)
+TITLE_FONT = ("Meiryo UI", 11, "bold")
+SMALL_FONT = ("Meiryo UI", 8)
+
+class TabbedNewsGadget:
     def __init__(self, root):
         self.root = root
         self.root.title("News Gadget")
-        self.root.geometry("450x800")
+        self.root.geometry("500x700")
+
+        # フォント設定
+        self.default_font = MAIN_FONT
 
         # --- ヘッダー ---
-        self.btn_refresh = tk.Button(root, text="ニュースを更新", command=self.refresh, font=("Arial", 10, "bold"))
-        self.btn_refresh.pack(pady=10)
+        header = tk.Frame(root)
+        header.pack(fill="x", pady=10)
 
-        # --- スクロール可能なエリア ---
-        self.canvas = tk.Canvas(root, bg="white")
-        self.scrollbar = tk.Scrollbar(root, orient="vertical", command=self.canvas.yview)
-        self.scroll_frame = tk.Frame(self.canvas, bg="white")
+        self.btn_refresh = tk.Button(header, text="ニュースを更新", command=self.refresh, font=TITLE_FONT)
+        self.btn_refresh.pack()
 
-        self.scroll_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        )
+        # --- タブ制御 (ttk.Notebook) ---
+        style = ttk.Style()
+        style.configure("TNotebook.Tab", font=MAIN_FONT, padding=[10, 5])
 
-        self.canvas.create_window((0, 0), window=self.scroll_frame, anchor="nw", width=430)
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=5)
 
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
+        self.tabs = {}
+        for cat in CATEGORIES:
+            tab_frame = tk.Frame(self.notebook, bg=cat["color"])
+            self.notebook.add(tab_frame, text=cat["label"])
+
+            # 各タブ内にスクロールエリアを作成
+            canvas = tk.Canvas(tab_frame, bg=cat["color"], highlightthickness=0)
+            scrollbar = tk.Scrollbar(tab_frame, orient="vertical", command=canvas.yview)
+            content_frame = tk.Frame(canvas, bg=cat["color"])
+
+            content_frame.bind(
+                "<Configure>",
+                lambda e, c=canvas: c.configure(scrollregion=c.bbox("all"))
+            )
+
+            canvas_window = canvas.create_window((0, 0), window=content_frame, anchor="nw", width=460)
+            canvas.configure(yscrollcommand=scrollbar.set)
+
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+
+            self.tabs[cat["label"]] = {
+                "content": content_frame,
+                "canvas": canvas,
+                "color": cat["color"]
+            }
 
         # --- ヘルプ表示 ---
-        help_text = "※表示されない場合はネット接続やライブラリを確認してください"
-        tk.Label(root, text=help_text, font=("Arial", 8), fg="gray", bg="white").pack(fill="x")
+        help_text = "※表示されない場合はネット接続を確認してください"
+        tk.Label(root, text=help_text, font=SMALL_FONT, fg="gray").pack(fill="x", pady=2)
 
         self.refresh()
 
     def refresh(self):
-        # 既存の内容をクリア
-        for widget in self.scroll_frame.winfo_children():
-            widget.destroy()
-        tk.Label(self.scroll_frame, text="取得中...", bg="white").pack(pady=20)
+        # 全タブを読み込み中に
+        for cat_label, tab in self.tabs.items():
+            for widget in tab["content"].winfo_children():
+                widget.destroy()
+            tk.Label(tab["content"], text="取得中...", bg=tab["color"], font=MAIN_FONT).pack(pady=50)
 
         # 別スレッドでニュース取得
         threading.Thread(target=self.fetch_all, daemon=True).start()
 
     def fetch_all(self):
-        all_results = []
         for cat in CATEGORIES:
             items = self.fetch_news(cat["q"])
-            all_results.append((cat, items))
-
-        # メインスレッドで描画
-        self.root.after(0, self.display, all_results)
+            # 各カテゴリごとにメインスレッドで描画
+            self.root.after(0, self.display_category, cat["label"], items)
 
     def fetch_news(self, query):
         url = f"https://news.google.com/rss/search?q={quote(query)}&hl=ja&gl=JP&ceid=JP:ja"
         try:
-            # シンプルなヘッダーでリクエスト
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
             try:
                 r = requests.get(url, headers=headers, timeout=15)
             except requests.exceptions.SSLError:
-                # SSLエラー時の回避策
                 r = requests.get(url, headers=headers, timeout=15, verify=False)
 
             if r.status_code != 200: return []
 
             feed = feedparser.parse(r.content)
-            # 3. 最新順かつ日経優先のソート
-            # (日経かどうか, 日付) のタプルでソート
+            # ソート: 日経優先、他も広く集める（上位15件）
             sorted_entries = sorted(feed.entries, key=lambda e: (
                 "日本経済新聞" in e.get("source", {}).get("title", ""),
                 e.get("published_parsed")
             ), reverse=True)
 
-            return sorted_entries[:5] # 各5件
+            return sorted_entries[:15]
         except:
             return []
 
-    def display(self, all_results):
-        for widget in self.scroll_frame.winfo_children():
+    def display_category(self, label, items):
+        tab = self.tabs[label]
+        for widget in tab["content"].winfo_children():
             widget.destroy()
 
-        for cat, items in all_results:
-            # カテゴリセクション
-            section = tk.Frame(self.scroll_frame, bg=cat["color"], pady=10)
-            section.pack(fill="x", pady=5)
-            tk.Label(section, text=cat["label"], font=("Arial", 12, "bold"), bg=cat["color"]).pack(anchor="w", padx=10)
+        if not items:
+            tk.Label(tab["content"], text="記事を取得できませんでした", bg=tab["color"], font=MAIN_FONT).pack(pady=50)
+            return
 
-            if not items:
-                tk.Label(section, text="取得できませんでした", bg=cat["color"]).pack(anchor="w", padx=20)
-                continue
+        for item in items:
+            # 記事カード
+            card = tk.Frame(tab["content"], bg="white", bd=1, relief="ridge", pady=8, padx=12)
+            card.pack(fill="x", padx=10, pady=5)
 
-            for item in items:
-                # 記事カード
-                card = tk.Frame(section, bg="white", bd=1, relief="ridge", pady=8, padx=10)
-                card.pack(fill="x", padx=10, pady=4)
+            source_name = item.get("source", {}).get("title", "不明")
+            is_nikkei = "日本経済新聞" in source_name
 
-                # タイトル（クリックでブラウザ起動）
-                title = tk.Label(card, text=item.title, wraplength=380, justify="left",
-                                bg="white", fg="#0000EE", cursor="hand2", font=("Arial", 10, "underline"))
-                title.pack(anchor="w")
-                title.bind("<Button-1>", lambda e, url=item.link: webbrowser.open(url))
+            # 日経新聞の場合はバッジを表示
+            if is_nikkei:
+                badge = tk.Label(card, text="日経新聞", bg="#003399", fg="white", font=SMALL_FONT, padx=4)
+                badge.pack(anchor="w", pady=(0, 2))
 
-                # 情報（ソース・日付）
-                info = f"{item.get('source', {}).get('title', '不明')} | {item.get('published', '')}"
-                tk.Label(card, text=info, font=("Arial", 8), bg="white", fg="gray").pack(anchor="w")
+            # タイトル
+            title_color = "#0000EE" if not is_nikkei else "#000000"
+            title = tk.Label(card, text=item.title, wraplength=400, justify="left",
+                            bg="white", fg=title_color, cursor="hand2", font=TITLE_FONT)
+            title.pack(anchor="w")
+            title.bind("<Button-1>", lambda e, url=item.link: webbrowser.open(url))
+
+            # 下線エフェクト (マウスホバー時)
+            title.bind("<Enter>", lambda e, t=title: t.configure(font=("Meiryo UI", 11, "bold", "underline")))
+            title.bind("<Leave>", lambda e, t=title: t.configure(font=TITLE_FONT))
+
+            # 情報
+            pub_date = item.get('published', '')
+            info = f"{source_name} | {pub_date}"
+            tk.Label(card, text=info, font=SMALL_FONT, bg="white", fg="gray").pack(anchor="w", pady=(2, 0))
+
+        # スクロール領域の更新
+        tab["canvas"].configure(scrollregion=tab["canvas"].bbox("all"))
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = SimpleNewsGadget(root)
+    app = TabbedNewsGadget(root)
     root.mainloop()
