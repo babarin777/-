@@ -117,13 +117,24 @@ class TabbedNewsGadget:
             if r.status_code != 200: return []
 
             feed = feedparser.parse(r.content)
-            # ソート: 日経優先、他も広く集める（上位15件）
-            sorted_entries = sorted(feed.entries, key=lambda e: (
-                "日本経済新聞" in e.get("source", {}).get("title", ""),
-                e.get("published_parsed")
-            ), reverse=True)
 
-            return sorted_entries[:15]
+            # 全記事を日付順（新しい順）にソート
+            all_entries = sorted(feed.entries, key=lambda e: e.get("published_parsed"), reverse=True)
+
+            # 日経新聞の記事とそれ以外を分離
+            nikkei_entries = [e for e in all_entries if "日本経済新聞" in e.get("source", {}).get("title", "")]
+            other_entries = [e for e in all_entries if "日本経済新聞" not in e.get("source", {}).get("title", "")]
+
+            # 日経新聞は上位3件までを優先枠とし、残りは日付順で混ぜる
+            priority_nikkei = nikkei_entries[:3]
+            remaining_entries = sorted(nikkei_entries[3:] + other_entries,
+                                       key=lambda e: e.get("published_parsed") or (0,),
+                                       reverse=True)
+
+            # 優先枠 + 残りを結合して上位20件を返す
+            final_entries = (priority_nikkei + remaining_entries)[:20]
+
+            return final_entries
         except:
             return []
 
