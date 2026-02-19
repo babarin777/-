@@ -1,6 +1,24 @@
 import tkinter as tk
-import feedparser
-import requests
+from tkinter import messagebox
+import sys
+
+# 依存ライブラリのチェック
+try:
+    import feedparser
+    import requests
+except ImportError:
+    # Tkinterは標準ライブラリなので使える前提
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror(
+        "実行エラー",
+        "必要なライブラリ（requests, feedparser）が見つかりません。\n\n"
+        "コマンドプロンプトやターミナルで以下のコマンドを実行してください：\n"
+        "pip install requests feedparser\n\n"
+        "※インストール後、再度このファイルを実行してください。"
+    )
+    sys.exit(1)
+
 import threading
 import webbrowser
 from urllib.parse import quote
@@ -38,6 +56,10 @@ class SimpleNewsGadget:
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
+        # --- ヘルプ表示 ---
+        help_text = "※表示されない場合はネット接続やライブラリを確認してください"
+        tk.Label(root, text=help_text, font=("Arial", 8), fg="gray", bg="white").pack(fill="x")
+
         self.refresh()
 
     def refresh(self):
@@ -62,8 +84,13 @@ class SimpleNewsGadget:
         url = f"https://news.google.com/rss/search?q={quote(query)}&hl=ja&gl=JP&ceid=JP:ja"
         try:
             # シンプルなヘッダーでリクエスト
-            headers = {"User-Agent": "Mozilla/5.0"}
-            r = requests.get(url, headers=headers, timeout=10)
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
+            try:
+                r = requests.get(url, headers=headers, timeout=15)
+            except requests.exceptions.SSLError:
+                # SSLエラー時の回避策
+                r = requests.get(url, headers=headers, timeout=15, verify=False)
+
             if r.status_code != 200: return []
 
             feed = feedparser.parse(r.content)
