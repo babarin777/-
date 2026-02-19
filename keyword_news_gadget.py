@@ -1,5 +1,14 @@
 import sys
 import os
+import tkinter as tk
+from tkinter import ttk, messagebox
+import webbrowser
+import threading
+import re
+import html as html_lib
+import urllib.parse
+from io import BytesIO
+import logging
 
 # 依存ライブラリのチェック
 missing_libs = []
@@ -12,44 +21,34 @@ except ImportError: missing_libs.append("Pillow (PIL)")
 
 if missing_libs:
     print(f"エラー: 以下のライブラリがインストールされていません: {', '.join(missing_libs)}")
-    print("インストールするには以下のコマンドを実行してください:")
-    print(f"pip install {' '.join(['requests', 'feedparser', 'Pillow'])}")
     sys.exit(1)
-
-import tkinter as tk
-from tkinter import ttk, messagebox
-import webbrowser
-import threading
-import re
-import html as html_lib
-import urllib.parse
-from io import BytesIO
-import logging
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- デザイン設定 ---
 COLORS = [
-    {"bg": "#E3F2FD", "header": "#BBDEFB", "accent": "#64B5F6"}, # Pale Blue
-    {"bg": "#FCE4EC", "header": "#F8BBD0", "accent": "#F06292"}, # Pale Pink
-    {"bg": "#F1F8E9", "header": "#DCEDC8", "accent": "#81C784"}  # Pale Green
+    {"bg": "#E1F5FE", "header": "#B3E5FC", "text": "#01579B"}, # Pale Blue
+    {"bg": "#FCE4EC", "header": "#F8BBD0", "text": "#880E4F"}, # Pale Pink
+    {"bg": "#E8F5E9", "header": "#C8E6C9", "text": "#1B5E20"}  # Pale Green
 ]
 COLOR_CARD = "#FFFFFF"
-COLOR_TEXT_MAIN = "#37474F"
-COLOR_TEXT_SUB = "#78909C"
+COLOR_TEXT_SUB = "#607D8B"
 COLOR_BORDER = "#CFD8DC"
+COLOR_NIKKEI = "#FF9800" # 日経用アクセント
 
-FONT_S = ("Yu Gothic UI", 9)
-FONT_M = ("Yu Gothic UI", 11)
-FONT_B = ("Yu Gothic UI", 12, "bold")
-FONT_TITLE = ("Yu Gothic UI", 24, "bold")
+FONTS = ["Yu Gothic UI", "Meiryo", "MS PGothic", "Helvetica", "Arial", "sans-serif"]
+
+def get_font(size, bold=False):
+    weight = "bold" if bold else "normal"
+    return (FONTS[0], size, weight)
 
 class NewsCard(tk.Frame):
-    def __init__(self, parent, title, link, date, source, image_obj=None, card_bg=COLOR_CARD):
+    def __init__(self, parent, title, link, date, source, card_bg=COLOR_CARD):
         super().__init__(parent, bg=card_bg, bd=1, relief=tk.FLAT, highlightbackground=COLOR_BORDER, highlightthickness=1)
         self.link = link
         self.card_bg = card_bg
+        self.image_label = None
 
         # マウスイベントのバインド
         self.bind("<Button-1>", self.open_link)
@@ -57,207 +56,237 @@ class NewsCard(tk.Frame):
         self.bind("<Leave>", self.on_leave)
 
         # 内容の配置
-        inner = tk.Frame(self, bg=card_bg, padx=15, pady=15)
-        inner.pack(fill=tk.BOTH, expand=True)
-        inner.bind("<Button-1>", self.open_link)
+        self.inner = tk.Frame(self, bg=card_bg, padx=12, pady=12)
+        self.inner.pack(fill=tk.BOTH, expand=True)
+        self.inner.bind("<Button-1>", self.open_link)
 
-        # 画像
-        if image_obj:
-            try:
-                img_label = tk.Label(inner, image=image_obj, bg=card_bg)
-                img_label.image = image_obj # 参照保持
-                img_label.pack(fill=tk.X, pady=(0, 10))
-                img_label.bind("<Button-1>", self.open_link)
-            except Exception as e:
-                logging.error(f"Error displaying image: {e}")
+        # 日経フラグ
+        is_nikkei = "日本経済新聞" in source or "日経" in title
 
         # ソースと日付
+        meta_frame = tk.Frame(self.inner, bg=card_bg)
+        meta_frame.pack(fill=tk.X)
+        meta_frame.bind("<Button-1>", self.open_link)
+
+        if is_nikkei:
+            n_label = tk.Label(meta_frame, text="日経優先", fg="white", bg=COLOR_NIKKEI, font=get_font(8, True), padx=4)
+            n_label.pack(side=tk.LEFT, padx=(0, 5))
+
         meta_text = f"{source} • {date}"
-        meta_label = tk.Label(inner, text=meta_text, fg=COLOR_TEXT_SUB, bg=card_bg, font=FONT_S)
-        meta_label.pack(anchor=tk.W)
-        meta_label.bind("<Button-1>", self.open_link)
+        tk.Label(meta_frame, text=meta_text, fg=COLOR_TEXT_SUB, bg=card_bg, font=get_font(9)).pack(side=tk.LEFT)
 
         # タイトル
-        t_label = tk.Label(inner, text=title, fg=COLOR_TEXT_MAIN, bg=card_bg, font=FONT_B,
-                           wraplength=800, justify=tk.LEFT, cursor="hand2")
-        t_label.pack(anchor=tk.W, pady=(5, 0))
-        t_label.bind("<Button-1>", self.open_link)
+        self.t_label = tk.Label(self.inner, text=title, fg="#263238", bg=card_bg, font=get_font(11, True),
+                           wraplength=700, justify=tk.LEFT, cursor="hand2")
+        self.t_label.pack(anchor=tk.W, pady=(5, 0))
+        self.t_label.bind("<Button-1>", self.open_link)
+
+    def set_image(self, photo):
+        if self.image_label:
+            self.image_label.destroy()
+
+        self.image_label = tk.Label(self.inner, image=photo, bg=self.card_bg)
+        self.image_label.image = photo # 参照保持
+        self.image_label.pack(fill=tk.X, pady=(5, 5))
+        self.image_label.bind("<Button-1>", self.open_link)
+        # タイトルの前に持ってくる
+        self.image_label.pack_forget()
+        self.image_label.pack(fill=tk.X, pady=(0, 10), before=self.t_label)
 
     def open_link(self, event=None):
         webbrowser.open(self.link)
 
     def on_enter(self, event=None):
-        hover_bg = self.lighten_color(self.card_bg, 0.95)
-        self.update_bg(hover_bg)
+        self.update_bg("#F5F5F5")
 
     def on_leave(self, event=None):
         self.update_bg(self.card_bg)
 
     def update_bg(self, color):
-        self.config(bg=color)
-        for child in self.winfo_children():
-            child.config(bg=color)
-            for subchild in child.winfo_children():
-                subchild.config(bg=color)
-
-    def lighten_color(self, hex_color, factor):
-        hex_color = hex_color.lstrip('#')
-        rgb = [int(hex_color[i:i+2], 16) for i in (0, 2, 4)]
-        new_rgb = [min(255, int(c + (255 - c) * (1 - factor))) for c in rgb]
-        return "#%02x%02x%02x" % tuple(new_rgb)
+        def _update(widget):
+            # 日経タグ以外を更新
+            if widget.winfo_class() == 'Label' and widget.cget("bg") == COLOR_NIKKEI:
+                return
+            widget.config(bg=color)
+            for child in widget.winfo_children():
+                _update(child)
+        _update(self)
 
 class KeywordNewsGadget:
     def __init__(self, root):
         self.root = root
-        self.root.title("Keyword News Gadget")
-        self.root.geometry("1000x850")
-        self.root.configure(bg="#F5F5F5")
+        self.root.title("Advanced News Gadget")
+        self.root.geometry("900x950")
+        self.root.configure(bg="#ECEFF1")
 
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
 
         self.setup_ui()
 
     def setup_ui(self):
         # メインコンテナ
-        self.main_frame = tk.Frame(self.root, bg="#F5F5F5")
-        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        main_container = tk.Frame(self.root, bg="#ECEFF1")
+        main_container.pack(fill=tk.BOTH, expand=True)
 
         # 入力エリア
-        input_panel = tk.Frame(self.main_frame, bg="#FFFFFF", padx=15, pady=15, bd=1, relief=tk.RIDGE)
-        input_panel.pack(fill=tk.X, pady=(0, 10))
+        input_panel = tk.Frame(main_container, bg="#FFFFFF", padx=15, pady=15, bd=0)
+        input_panel.pack(fill=tk.X)
 
-        tk.Label(input_panel, text="キーワード入力 (最大3つ)", font=FONT_B, bg="#FFFFFF").pack(anchor=tk.W, pady=(0, 10))
+        tk.Label(input_panel, text="Keyword News Gadget", font=get_font(18, True), bg="#FFFFFF", fg="#37474F").pack(pady=(0, 10))
 
-        self.entries = []
         entry_frame = tk.Frame(input_panel, bg="#FFFFFF")
         entry_frame.pack(fill=tk.X)
 
+        self.entries = []
+        default_kw = ["人工知能", "電気自動車", "半導体"]
         for i in range(3):
             f = tk.Frame(entry_frame, bg="#FFFFFF")
             f.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-            tk.Label(f, text=f"キーワード {i+1}", font=FONT_S, bg="#FFFFFF", fg=COLOR_TEXT_SUB).pack(anchor=tk.W)
-            e = tk.Entry(f, font=FONT_M, bd=1, relief=tk.SOLID)
+            tk.Label(f, text=f"キーワード {i+1}", font=get_font(9), bg="#FFFFFF", fg=COLOR_TEXT_SUB).pack(anchor=tk.W)
+            e = tk.Entry(f, font=get_font(11), bd=1, relief=tk.SOLID)
             e.pack(fill=tk.X, pady=2)
-            if i == 0: e.insert(0, "人工知能")
-            if i == 1: e.insert(0, "電気自動車")
-            if i == 2: e.insert(0, "半導体")
+            e.insert(0, default_kw[i])
             self.entries.append(e)
 
-        self.search_btn = tk.Button(input_panel, text="🔍 情報を取得", command=self.refresh_all,
-                                   bg="#424242", fg="white", font=FONT_B, relief=tk.FLAT, padx=20, pady=5, cursor="hand2")
-        self.search_btn.pack(pady=(15, 0))
+        btn_frame = tk.Frame(input_panel, bg="#FFFFFF")
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
 
-        self.status_var = tk.StringVar(value="キーワードを入力して検索してください")
-        tk.Label(self.main_frame, textvariable=self.status_var, font=FONT_S, bg="#F5F5F5", fg=COLOR_TEXT_SUB).pack(pady=5)
+        self.search_btn = tk.Button(btn_frame, text="🔄 全て更新", command=self.refresh_all,
+                                   bg="#455A64", fg="white", font=get_font(11, True), relief=tk.FLAT, padx=30, pady=8, cursor="hand2")
+        self.search_btn.pack(side=tk.LEFT)
 
-        # タブ
-        self.notebook = ttk.Notebook(self.main_frame)
-        self.notebook.pack(fill=tk.BOTH, expand=True)
+        self.ontop_var = tk.BooleanVar(value=False)
+        self.ontop_check = tk.Checkbutton(btn_frame, text="最前面表示", variable=self.ontop_var,
+                                          command=self.toggle_ontop, bg="#FFFFFF", font=get_font(9))
+        self.ontop_check.pack(side=tk.LEFT, padx=20)
 
-        self.scroll_containers = []
+        self.status_label = tk.Label(btn_frame, text="Ready", font=get_font(9), bg="#FFFFFF", fg=COLOR_TEXT_SUB)
+        self.status_label.pack(side=tk.RIGHT, pady=5)
+
+        # スクロールエリア
+        outer_scroll = tk.Frame(main_container, bg="#ECEFF1")
+        outer_scroll.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.canvas = tk.Canvas(outer_scroll, bg="#ECEFF1", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(outer_scroll, orient="vertical", command=self.canvas.yview)
+        self.scroll_content = tk.Frame(self.canvas, bg="#ECEFF1")
+
+        self.scroll_content.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.create_window((0, 0), window=self.scroll_content, anchor="nw", width=860)
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # マウスホイール
+        self.canvas.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        # 各セクション
+        self.sections = []
         for i in range(3):
-            color_set = COLORS[i]
-            outer_frame = tk.Frame(self.notebook, bg=color_set["bg"])
-            self.notebook.add(outer_frame, text=f"キーワード {i+1}")
+            sec_frame = tk.Frame(self.scroll_content, bg=COLORS[i]["bg"], padx=10, pady=10)
+            sec_frame.pack(fill=tk.X, pady=5)
 
-            canvas = tk.Canvas(outer_frame, bg=color_set["bg"], highlightthickness=0)
-            scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=canvas.yview)
-            scrollable_frame = tk.Frame(canvas, bg=color_set["bg"])
+            header = tk.Frame(sec_frame, bg=COLORS[i]["header"], padx=10, pady=5)
+            header.pack(fill=tk.X)
 
-            scrollable_frame.bind(
-                "<Configure>",
-                lambda e, c=canvas: c.configure(scrollregion=c.bbox("all"))
-            )
+            title_label = tk.Label(header, text=f"Keyword {i+1}", font=get_font(12, True),
+                                  bg=COLORS[i]["header"], fg=COLORS[i]["text"])
+            title_label.pack(side=tk.LEFT)
 
-            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=950)
-            canvas.configure(yscrollcommand=scrollbar.set)
+            content_area = tk.Frame(sec_frame, bg=COLORS[i]["bg"])
+            content_area.pack(fill=tk.X, pady=5)
 
-            canvas.pack(side="left", fill="both", expand=True)
-            scrollbar.pack(side="right", fill="y")
+            self.sections.append({"frame": sec_frame, "title": title_label, "content": content_area})
 
-            # マウスホイール対応
-            canvas.bind("<Enter>", lambda e, c=canvas: c.bind_all("<MouseWheel>", lambda ev: c.yview_scroll(int(-1*(ev.delta/120)), "units")))
-            canvas.bind("<Leave>", lambda e, c=canvas: c.unbind_all("<MouseWheel>"))
+        # ログエリア
+        self.log_text = tk.Text(main_container, height=4, bg="#263238", fg="#CFD8DC", font=("Consolas", 8))
+        self.log_text.pack(fill=tk.X)
+        self.log_text.insert(tk.END, "Application started.\n")
 
-            self.scroll_containers.append(scrollable_frame)
+    def toggle_ontop(self):
+        self.root.attributes("-topmost", self.ontop_var.get())
+
+    def log(self, message):
+        self.log_text.insert(tk.END, f"{message}\n")
+        self.log_text.see(tk.END)
+        logging.info(message)
 
     def refresh_all(self):
         keywords = [e.get().strip() for e in self.entries]
         if not any(keywords):
-            messagebox.showwarning("警告", "キーワードを少なくとも1つ入力してください。")
+            messagebox.showwarning("Warning", "Please enter at least one keyword.")
             return
 
-        self.status_var.set("更新中...")
+        self.status_label.config(text="Updating...")
         for i, kw in enumerate(keywords):
             if kw:
-                self.notebook.tab(i, text=kw)
+                self.sections[i]["title"].config(text=f"🔍 {kw}")
                 threading.Thread(target=self.fetch_keyword, args=(i, kw), daemon=True).start()
             else:
-                self.notebook.tab(i, text=f"(空)")
-                self.clear_container(i)
+                self.sections[i]["title"].config(text="(Empty)")
+                self.clear_section(i)
 
-    def clear_container(self, index):
-        container = self.scroll_containers[index]
-        for widget in container.winfo_children():
+    def clear_section(self, index):
+        for widget in self.sections[index]["content"].winfo_children():
             widget.destroy()
 
     def fetch_keyword(self, index, keyword):
-        self.root.after(0, lambda: self.show_loading(index))
+        self.root.after(0, lambda: self.clear_section(index))
+        self.root.after(0, lambda: tk.Label(self.sections[index]["content"], text="Loading...",
+                                           bg=COLORS[index]["bg"], font=get_font(10)).pack(pady=10))
 
         encoded_query = urllib.parse.quote(keyword)
+        # キーワードに合致するものを検索（日経優先は後のソートで行う）
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ja&gl=JP&ceid=JP:ja"
 
         try:
-            logging.info(f"Fetching RSS: {url}")
+            self.log(f"Fetching RSS for '{keyword}'...")
             response = requests.get(url, headers=self.headers, timeout=15)
             feed = feedparser.parse(response.content)
 
             if not feed.entries:
-                logging.info(f"No entries for {keyword}")
-                self.root.after(0, lambda: self.show_message(index, "記事が見つかりませんでした。"))
+                self.log(f"No results for '{keyword}'.")
+                self.root.after(0, lambda: self.show_empty(index))
                 return
 
-            # 日経関連の優先順位付け
-            sorted_entries = sorted(feed.entries, key=lambda e: not (
-                (hasattr(e, 'source') and "日本経済新聞" in e.source.title) or
-                "日経" in e.title
-            ))
+            sorted_entries = sorted(feed.entries, key=lambda e: (
+                ("日本経済新聞" in (e.source.title if hasattr(e, 'source') else "") or "日経" in e.title),
+                getattr(e, 'published_parsed', 0)
+            ), reverse=True)
 
-            # 上位20件を表示
-            entries_to_process = sorted_entries[:20]
-
-            processed_data = []
-            for i, entry in enumerate(entries_to_process):
-                img_obj = None
-                # 上位3件のみ画像取得（レスポンス向上のため削減、タイムアウト短縮）
-                if i < 3:
-                    img_obj = self.get_og_image(entry.link)
-
-                processed_data.append({
-                    "title": entry.title,
-                    "link": entry.link,
-                    "date": getattr(entry, 'published', ""),
-                    "source": entry.source.title if hasattr(entry, 'source') else "News",
-                    "image": img_obj
-                })
-
-            self.root.after(0, lambda: self.update_ui(index, processed_data))
+            entries_to_show = sorted_entries[:10]
+            self.root.after(0, lambda: self.display_entries(index, entries_to_show))
 
         except Exception as e:
-            logging.error(f"Error fetching keyword {keyword}: {e}", exc_info=True)
-            self.root.after(0, lambda: self.show_message(index, f"エラーが発生しました: {str(e)}", is_error=True))
+            self.log(f"Error fetching '{keyword}': {str(e)}")
+            self.root.after(0, lambda: self.show_error(index, str(e)))
 
-    def show_loading(self, index):
-        self.clear_container(index)
-        tk.Label(self.scroll_containers[index], text="⏳ 読み込み中...",
-                 bg=COLORS[index]["bg"], fg=COLOR_TEXT_SUB, font=FONT_M, pady=40).pack()
+    def display_entries(self, index, entries):
+        self.clear_section(index)
+        content_area = self.sections[index]["content"]
 
-    def get_og_image(self, url):
+        cards = []
+        for entry in entries:
+            title = entry.title
+            link = entry.link
+            date = getattr(entry, 'published', "")
+            source = entry.source.title if hasattr(entry, 'source') else "News"
+
+            card = NewsCard(content_area, title, link, date, source, card_bg=COLOR_CARD)
+            card.pack(fill=tk.X, pady=5)
+            cards.append((card, link))
+
+        self.status_label.config(text="Done")
+
+        for card, link in cards[:5]:
+            threading.Thread(target=self.fetch_and_update_image, args=(card, link), daemon=True).start()
+
+    def fetch_and_update_image(self, card, url):
         try:
-            # タイムアウトを短縮し、リダイレクトを制限
-            res = requests.get(url, headers=self.headers, timeout=3, allow_redirects=True)
+            res = requests.get(url, headers=self.headers, timeout=5)
             html = res.text
             match = re.search(r'<meta [^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']', html)
             if not match:
@@ -270,46 +299,30 @@ class KeywordNewsGadget:
                     parsed = urllib.parse.urlparse(url)
                     img_url = f"{parsed.scheme}://{parsed.netloc}{img_url}"
 
-                img_res = requests.get(img_url, headers=self.headers, timeout=3)
+                img_res = requests.get(img_url, headers=self.headers, timeout=5)
                 img = Image.open(BytesIO(img_res.content))
-                img.thumbnail((800, 400))
-                return img
-        except Exception as e:
-            logging.debug(f"Image fetch failed for {url}: {e}")
-        return None
+                img.thumbnail((700, 350))
+                self.root.after(0, lambda: self.apply_image(card, img))
+        except:
+            pass
 
-    def update_ui(self, index, data):
-        container = self.scroll_containers[index]
-        self.clear_container(index)
+    def apply_image(self, card, img):
+        try:
+            photo = ImageTk.PhotoImage(img)
+            card.set_image(photo)
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        except:
+            pass
 
-        for item in data:
-            photo = None
-            if item["image"]:
-                try:
-                    photo = ImageTk.PhotoImage(item["image"])
-                except Exception as e:
-                    logging.error(f"Error creating PhotoImage: {e}")
+    def show_empty(self, index):
+        self.clear_section(index)
+        tk.Label(self.sections[index]["content"], text="記事が見つかりませんでした。",
+                 bg=COLORS[index]["bg"], fg=COLOR_TEXT_SUB, font=get_font(10)).pack(pady=20)
 
-            card = NewsCard(container, item["title"], item["link"], item["date"],
-                            item["source"], photo, card_bg=COLOR_CARD)
-            card.pack(fill=tk.X, padx=20, pady=10)
-
-        # スクロール領域の強制更新
-        self.root.update_idletasks()
-        for i, frame in enumerate(self.scroll_containers):
-            # 親のキャンバスを取得して更新
-            canvas = frame.master
-            if isinstance(canvas, tk.Canvas):
-                canvas.configure(scrollregion=canvas.bbox("all"))
-
-        self.status_var.set("完了")
-
-    def show_message(self, index, message, is_error=False):
-        container = self.scroll_containers[index]
-        self.clear_container(index)
-        color = "red" if is_error else COLOR_TEXT_SUB
-        tk.Label(container, text=message, bg=COLORS[index]["bg"], fg=color, font=FONT_M, pady=20).pack()
-        self.status_var.set("更新終了")
+    def show_error(self, index, msg):
+        self.clear_section(index)
+        tk.Label(self.sections[index]["content"], text=f"Error: {msg}",
+                 bg=COLORS[index]["bg"], fg="red", font=get_font(10)).pack(pady=20)
 
 if __name__ == "__main__":
     root = tk.Tk()
