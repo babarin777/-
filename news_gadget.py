@@ -1,7 +1,22 @@
+import sys
+
+# 依存ライブラリのチェック
+missing_libs = []
+try: import requests
+except ImportError: missing_libs.append("requests")
+try: import feedparser
+except ImportError: missing_libs.append("feedparser")
+try: from PIL import Image, ImageTk
+except ImportError: missing_libs.append("Pillow (PIL)")
+
+if missing_libs:
+    print(f"エラー: 以下のライブラリがインストールされていません: {', '.join(missing_libs)}")
+    print("インストールするには以下のコマンドを実行してください:")
+    print(f"pip install {' '.join(['requests', 'feedparser', 'Pillow'])}")
+    sys.exit(1)
+
 import tkinter as tk
 from tkinter import ttk, messagebox
-import requests
-import feedparser
 import webbrowser
 import threading
 import re
@@ -107,9 +122,20 @@ class NewsGadget:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
 
-        self.image_cache = {}
         self.setup_ui()
-        self.refresh_all()
+        self.check_connection_and_start()
+
+    def check_connection_and_start(self):
+        def check():
+            self.status_var.set("接続確認中...")
+            try:
+                requests.get("https://www.google.com", timeout=5)
+                self.root.after(0, self.refresh_all)
+            except Exception:
+                self.root.after(0, lambda: self.status_var.set("接続エラー: インターネットを確認してください"))
+                logging.error("No internet connection.")
+
+        threading.Thread(target=check, daemon=True).start()
 
     def setup_ui(self):
         # メインコンテナ
@@ -157,8 +183,14 @@ class NewsGadget:
             canvas.pack(side="left", fill="both", expand=True)
             scrollbar.pack(side="right", fill="y")
 
-            # マウスホイール対応
-            canvas.bind_all("<MouseWheel>", lambda e, c=canvas: c.yview_scroll(int(-1*(e.delta/120)), "units"))
+            # マウスホイール対応 (キャンバスに入った時のみ有効化)
+            def _bind_mousewheel(event, c=canvas):
+                c.bind_all("<MouseWheel>", lambda e: c.yview_scroll(int(-1*(e.delta/120)), "units"))
+            def _unbind_mousewheel(event, c=canvas):
+                c.unbind_all("<MouseWheel>")
+
+            canvas.bind("<Enter>", _bind_mousewheel)
+            canvas.bind("<Leave>", _unbind_mousewheel)
 
             self.scroll_containers[cat_id] = scrollable_frame
 
@@ -232,7 +264,7 @@ class NewsGadget:
                 img_res = requests.get(img_url, headers=self.headers, timeout=5)
                 img = Image.open(BytesIO(img_res.content))
                 img.thumbnail((800, 400))
-                return ImageTk.PhotoImage(img)
+                return img # PhotoImageではなくImageオブジェクトを返す
         except:
             pass
         return None
@@ -243,8 +275,16 @@ class NewsGadget:
             widget.destroy()
 
         for item in data:
+            # メインスレッドでPhotoImageに変換
+            photo = None
+            if item["image"]:
+                try:
+                    photo = ImageTk.PhotoImage(item["image"])
+                except Exception as e:
+                    logging.error(f"Error creating PhotoImage: {e}")
+
             card = NewsCard(container, item["title"], item["link"], item["date"],
-                            item["source"], item["image"], item["is_video"])
+                            item["source"], photo, item["is_video"])
             card.pack(fill=tk.X, padx=20, pady=10)
 
         self.status_var.set("完了")
