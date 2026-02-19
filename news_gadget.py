@@ -12,12 +12,12 @@ import re
 
 # --- Configuration ---
 CATEGORIES = [
-    {"name": "AI関連", "keyword": "AI", "bg": "AliceBlue"},
-    {"name": "再エネ", "keyword": "再生可能エネルギー", "bg": "LavenderBlush"},
-    {"name": "EV", "keyword": "EV 電気自動車", "bg": "Honeydew"}
+    {"name": "AI関連", "keyword": "AI OR 人工知能", "bg": "AliceBlue"},
+    {"name": "再エネ", "keyword": "再生可能エネルギー OR 再エネ", "bg": "LavenderBlush"},
+    {"name": "EV", "keyword": "EV OR 電気自動車", "bg": "Honeydew"}
 ]
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 FETCH_TIMEOUT = 15
 MAX_THUMBNAILS_PER_SECTION = 3
 VERIFY_SSL = True # Set to False if SSL certificates are broken in the environment
@@ -76,6 +76,15 @@ class NewsGadget:
         self.root = root
         self.root.title("News Gadget")
         self.root.geometry("500x800")
+
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": USER_AGENT,
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Referer": "https://news.google.com/"
+        })
+        # Add consent cookie to bypass Google consent pages
+        self.session.cookies.set("CONSENT", "YES+", domain=".google.com")
 
         self.setup_fonts()
         self.setup_ui()
@@ -200,58 +209,56 @@ class NewsGadget:
 
     def fetch_all_news(self):
         try:
-            results = []
+            # Prepare UI: Clear and show loading for first category
+            self.root.after(0, self.clear_container)
+
             for cat in CATEGORIES:
                 self.log(f"{cat['name']} の情報を取得しています...")
                 entries = self.get_news_entries(cat['keyword'])
                 self.log(f"{cat['name']}: {len(entries)}件の記事が見つかりました。")
                 sorted_entries = self.sort_entries(entries)
-                results.append((cat, sorted_entries))
 
-            # Update UI on main thread at once to clear "Loading..."
-            self.root.after(0, self.render_all_categories, results)
-            self.log("すべてのカテゴリの読み込みが完了しました。")
+                # Render each category as soon as it's ready
+                self.root.after(0, self.render_category, cat, sorted_entries)
+
+            self.log("すべてのカテゴリの読み込み指示を完了しました。")
         except Exception as e:
             self.log(f"致命的なエラー: {e}")
 
     def render_all_categories(self, results):
+        # Deprecated: Using incremental rendering now, but keeping signature if needed
         self.clear_container()
-        if not results:
-            tk.Label(self.container, text="データが取得できませんでした。", font=self.article_font, pady=20).pack()
-
         for cat, entries in results:
             self.render_category(cat, entries)
 
-        # Final layout update
-        self.container.update_idletasks()
-        self.scroll_frame.canvas.configure(scrollregion=self.scroll_frame.canvas.bbox("all"))
-
     def get_news_entries(self, keyword):
-        encoded_keyword = requests.utils.quote(keyword)
+        import urllib.parse
+        encoded_keyword = urllib.parse.quote_plus(keyword)
         rss_url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=ja&gl=JP&ceid=JP:ja"
 
         try:
-            headers = {"User-Agent": USER_AGENT}
             try:
-                response = requests.get(rss_url, headers=headers, timeout=FETCH_TIMEOUT, verify=VERIFY_SSL)
-            except requests.exceptions.SSLError:
-                self.log(f"SSL検証に失敗しました。検証なしで再試行します: {keyword}")
-                response = requests.get(rss_url, headers=headers, timeout=FETCH_TIMEOUT, verify=False)
+                response = self.session.get(rss_url, timeout=FETCH_TIMEOUT, verify=VERIFY_SSL)
+            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+                self.log(f"接続失敗、SSL検証なしで再試行します: {keyword}")
+                response = self.session.get(rss_url, timeout=FETCH_TIMEOUT, verify=False)
 
             if response.status_code != 200:
                 self.log(f"エラー: {keyword} (HTTP {response.status_code}) 内容長: {len(response.content)}")
-                if len(response.content) < 1000:
-                    self.log(f"内容: {response.text}")
+                if len(response.content) > 0:
+                    self.log(f"内容(冒頭): {response.text[:200]}")
                 return []
 
-            feed = feedparser.parse(response.content)
-            if feed.bozo:
-                self.log(f"警告: {keyword} の解析例外: {feed.bozo_exception}")
+            # Explicitly decode if content looks like it should be text
+            content = response.content
+            feed = feedparser.parse(content)
 
             if not feed.entries:
-                self.log(f"注意: {keyword} の記事が0件です。内容長: {len(response.content)}")
-                if len(response.content) < 500:
-                    self.log(f"レスポンス: {response.text}")
+                self.log(f"注意: {keyword} の記事が0件です。レスポンスURL: {response.url}")
+                if "consent.google.com" in response.url:
+                    self.log("警告: 同意画面にリダイレクトされました。クッキー設定を確認してください。")
+                if len(content) > 0:
+                    self.log(f"内容(冒頭): {response.text[:200]}")
 
             return feed.entries
         except requests.exceptions.SSLError as e:
