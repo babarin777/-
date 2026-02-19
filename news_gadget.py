@@ -79,8 +79,42 @@ class NewsGadget:
         self.setup_fonts()
         self.setup_ui()
 
-        self.log("ガジェットを起動しました。ニュースの取得を開始します...")
-        self.refresh_news()
+        self.log("ガジェットを起動しました。")
+        self.run_startup_diagnostics()
+
+    def run_startup_diagnostics(self):
+        def check():
+            self.log("--- スタートアップ診断開始 ---")
+
+            # 1. Dependency Check
+            try:
+                import feedparser, requests, PIL
+                self.log("・ライブラリ確認: OK (feedparser, requests, Pillow)")
+            except ImportError as e:
+                self.log(f"・ライブラリ確認: NG ({e})")
+                self.log("  'pip install -r requirements.txt' を実行してください。")
+
+            # 2. Internet Connectivity
+            try:
+                res = requests.get("https://www.google.com", timeout=5)
+                self.log(f"・インターネット接続: OK (status: {res.status_code})")
+            except Exception as e:
+                self.log(f"・インターネット接続: NG ({e})")
+
+            # 3. RSS Access
+            try:
+                test_url = "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
+                res = requests.get(test_url, headers={"User-Agent": USER_AGENT}, timeout=5)
+                self.log(f"・RSSアクセス: OK (status: {res.status_code})")
+                if res.status_code != 200:
+                    self.log("  警告: Google News RSS へのアクセスが制限されている可能性があります。")
+            except Exception as e:
+                self.log(f"・RSSアクセス: NG ({e})")
+
+            self.log("--- 診断完了 ---")
+            self.root.after(0, self.refresh_news)
+
+        threading.Thread(target=check, daemon=True).start()
 
     def setup_fonts(self):
         available_families = font.families()
@@ -106,7 +140,8 @@ class NewsGadget:
         self.stay_on_top_var = tk.BooleanVar(value=False)
         tk.Checkbutton(header, text="最前面表示", variable=self.stay_on_top_var, command=self.toggle_stay_on_top).pack(side="left", padx=10)
 
-        tk.Button(header, text="更新", command=self.refresh_news).pack(side="right")
+        tk.Button(header, text="更新", command=self.refresh_news).pack(side="right", padx=2)
+        tk.Button(header, text="環境診断", command=self.run_startup_diagnostics).pack(side="right", padx=2)
 
         # Scrollable Area
         self.scroll_frame = ScrollableFrame(self.root)
@@ -115,7 +150,7 @@ class NewsGadget:
         self.container = self.scroll_frame.scrollable_window
 
         # Log Area
-        self.log_text = tk.Text(self.root, height=4, font=self.log_font, state="disabled", bg="#f0f0f0")
+        self.log_text = tk.Text(self.root, height=8, font=self.log_font, state="disabled", bg="#f0f0f0")
         self.log_text.pack(fill="x")
 
     def toggle_stay_on_top(self):
@@ -133,23 +168,35 @@ class NewsGadget:
         for widget in self.container.winfo_children():
             widget.destroy()
 
+        tk.Label(self.container, text="読み込み中...", font=self.article_font, pady=20).pack()
+
         self.log("ニュースを取得中...")
         threading.Thread(target=self.fetch_all_news, daemon=True).start()
 
+    def clear_container(self):
+        for widget in self.container.winfo_children():
+            widget.destroy()
+
     def fetch_all_news(self):
         try:
+            results = []
             for cat in CATEGORIES:
                 self.log(f"{cat['name']} の情報を取得しています...")
                 entries = self.get_news_entries(cat['keyword'])
                 self.log(f"{cat['name']}: {len(entries)}件の記事が見つかりました。")
                 sorted_entries = self.sort_entries(entries)
+                results.append((cat, sorted_entries))
 
-                # Update UI on main thread
-                self.root.after(0, self.render_category, cat, sorted_entries)
-
-            self.log("すべてのカテゴリの読み込み指示を出しました。")
+            # Update UI on main thread at once to clear "Loading..."
+            self.root.after(0, self.render_all_categories, results)
+            self.log("すべてのカテゴリの読み込みが完了しました。")
         except Exception as e:
             self.log(f"致命的なエラー: {e}")
+
+    def render_all_categories(self, results):
+        self.clear_container()
+        for cat, entries in results:
+            self.render_category(cat, entries)
 
     def get_news_entries(self, keyword):
         encoded_keyword = requests.utils.quote(keyword)
@@ -158,11 +205,24 @@ class NewsGadget:
         try:
             headers = {"User-Agent": USER_AGENT}
             response = requests.get(rss_url, headers=headers, timeout=FETCH_TIMEOUT)
+
+            if response.status_code != 200:
+                self.log(f"エラー: {keyword} の取得に失敗しました (Status: {response.status_code})")
+                return []
+
             feed = feedparser.parse(response.content)
+            if feed.bozo:
+                self.log(f"警告: {keyword} のフィード解析に問題があります: {feed.bozo_exception}")
+
             return feed.entries
+        except requests.exceptions.Timeout:
+            self.log(f"エラー: {keyword} の取得がタイムアウトしました。")
+        except requests.exceptions.ConnectionError:
+            self.log(f"エラー: {keyword} の取得で接続エラーが発生しました。ネット接続を確認してください。")
         except Exception as e:
-            self.log(f"エラー: {keyword} の取得に失敗しました。 {e}")
-            return []
+            self.log(f"エラー: {keyword} の取得中に予期せぬエラーが発生しました: {e}")
+
+        return []
 
     def sort_entries(self, entries):
         # Nikkei first, then latest
@@ -188,7 +248,7 @@ class NewsGadget:
         tk.Label(frame, text=cat['name'], font=self.title_font, bg=cat['bg'], fg="#333").pack(anchor="w", padx=5)
 
         if not entries:
-            tk.Label(frame, text="記事が見つかりませんでした。", font=self.article_font, bg=cat['bg']).pack(anchor="w", padx=10)
+            tk.Label(frame, text="記事が見つかりませんでした。接続やキーワードを確認してください。", font=self.article_font, bg=cat['bg']).pack(anchor="w", padx=10)
         else:
             for i, entry in enumerate(entries[:5]): # Show top 5
                 self.render_article(frame, entry, cat['bg'], i < MAX_THUMBNAILS_PER_SECTION)
