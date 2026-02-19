@@ -1,26 +1,28 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 import webbrowser
 import threading
+import re
+import html as html_lib
+from io import BytesIO
+from PIL import Image, ImageTk
 
-# カラースキーム
-COLOR_BG = "#1e1e2e"        # ダーク背景
-COLOR_CARD = "#2a2a3d"      # カード背景
-COLOR_TEXT = "#cdd6f4"      # メインテキスト
-COLOR_DATE = "#a6adc8"      # 日付テキスト
-COLOR_LINK = "#89b4fa"      # リンク色
-COLOR_ACCENT = "#fab387"    # アクセント（更新ボタン等）
-COLOR_TAB_BG = "#181825"
-COLOR_SEPARATOR = "#45475a"
+# カラーパレット（清潔感のあるパステルグリーン）
+COLOR_BG = "#f1f8e9"      # 非常に淡いグリーン
+COLOR_CARD = "#ffffff"    # 白
+COLOR_TEXT_MAIN = "#2e7d32" # 濃いグリーン
+COLOR_TEXT_SUB = "#616161"  # グレー
+COLOR_ACCENT = "#81c784"    # 中間のグリーン
+COLOR_BORDER = "#c5e1a5"    # 境界線
 
 class NewsGadget:
     def __init__(self, root):
         self.root = root
-        self.root.title("Modern Tech News Gadget")
-        self.root.geometry("700x650")
+        self.root.title("Tech Trends - Visual News Gadget")
+        self.root.geometry("900x800")
         self.root.configure(bg=COLOR_BG)
 
         self.categories = {
@@ -29,43 +31,51 @@ class NewsGadget:
             "EV 🚗": "EV OR 電気自動車"
         }
 
+        self.images = {} # 画像参照保持用
         self.setup_styles()
         self.setup_ui()
 
     def setup_styles(self):
         style = ttk.Style()
-        style.theme_use('default')
+        style.theme_use('clam')
 
-        # タブのスタイル
         style.configure("TNotebook", background=COLOR_BG, borderwidth=0)
         style.configure("TNotebook.Tab",
-                        background=COLOR_TAB_BG,
-                        foreground=COLOR_TEXT,
-                        padding=[15, 5],
-                        font=('Helvetica', 10, 'bold'))
+                        background=COLOR_BORDER,
+                        foreground=COLOR_TEXT_MAIN,
+                        padding=[20, 8],
+                        font=('Helvetica', 11, 'bold'))
         style.map("TNotebook.Tab",
                   background=[("selected", COLOR_CARD)],
-                  foreground=[("selected", COLOR_ACCENT)])
+                  foreground=[("selected", COLOR_TEXT_MAIN)])
 
-        # ボタンのスタイル
-        style.configure("Accent.TButton",
+        style.configure("Update.TButton",
                         background=COLOR_ACCENT,
-                        foreground=COLOR_BG,
-                        font=('Helvetica', 10, 'bold'))
+                        foreground="white",
+                        font=('Helvetica', 10, 'bold'),
+                        borderwidth=0)
 
     def setup_ui(self):
-        # メインフレーム
-        main_frame = tk.Frame(self.root, bg=COLOR_BG, padx=20, pady=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        # メインコンテナ
+        self.main_container = tk.Frame(self.root, bg=COLOR_BG, padx=30, pady=20)
+        self.main_container.pack(fill=tk.BOTH, expand=True)
 
-        # タイトルラベル
-        title_label = tk.Label(main_frame, text="LATEST TECH TRENDS",
-                               bg=COLOR_BG, fg=COLOR_ACCENT,
-                               font=('Helvetica', 18, 'bold'))
-        title_label.pack(pady=(0, 20))
+        # ヘッダー
+        header = tk.Frame(self.main_container, bg=COLOR_BG)
+        header.pack(fill=tk.X, pady=(0, 20))
 
-        # タブコントロール
-        self.notebook = ttk.Notebook(main_frame)
+        title_label = tk.Label(header, text="TECH TRENDS EXPLORER",
+                               bg=COLOR_BG, fg=COLOR_TEXT_MAIN,
+                               font=('Impact', 28))
+        title_label.pack(side=tk.LEFT)
+
+        refresh_btn = ttk.Button(header, text="🔄 フィードを更新",
+                                 command=self.refresh_all,
+                                 style="Update.TButton")
+        refresh_btn.pack(side=tk.RIGHT, pady=5)
+
+        # タブ
+        self.notebook = ttk.Notebook(self.main_container)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
         self.text_widgets = {}
@@ -74,16 +84,15 @@ class NewsGadget:
             frame = tk.Frame(self.notebook, bg=COLOR_CARD)
             self.notebook.add(frame, text=cat)
 
-            # テキストエリア
             txt = tk.Text(frame,
                           bg=COLOR_CARD,
-                          fg=COLOR_TEXT,
-                          insertbackground=COLOR_TEXT,
-                          padx=20, pady=20,
-                          font=('Helvetica', 11),
+                          fg=COLOR_TEXT_MAIN,
+                          padx=30, pady=30,
+                          font=('Yu Gothic', 11),
                           wrap=tk.WORD,
                           borderwidth=0,
-                          cursor="arrow")
+                          cursor="arrow",
+                          state=tk.DISABLED)
 
             scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=txt.yview)
             txt.configure(yscrollcommand=scrollbar.set)
@@ -92,23 +101,13 @@ class NewsGadget:
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
             # タグ設定
-            txt.tag_configure("title", font=('Helvetica', 12, 'bold'), spacing1=10)
-            txt.tag_configure("date", foreground=COLOR_DATE, font=('Helvetica', 9))
-            txt.tag_configure("link", foreground=COLOR_LINK, underline=True)
-            txt.tag_configure("separator", foreground=COLOR_SEPARATOR)
+            txt.tag_configure("featured_title", font=('Yu Gothic', 18, 'bold'), spacing1=10, spacing3=10)
+            txt.tag_configure("title", font=('Yu Gothic', 12, 'bold'), spacing1=15)
+            txt.tag_configure("date", foreground=COLOR_TEXT_SUB, font=('Helvetica', 9))
+            txt.tag_configure("sep", foreground=COLOR_BORDER)
 
             self.text_widgets[cat] = txt
 
-        # 更新ボタン
-        btn_frame = tk.Frame(main_frame, bg=COLOR_BG)
-        btn_frame.pack(fill=tk.X, pady=(20, 0))
-
-        refresh_btn = ttk.Button(btn_frame, text="UPDATE FEED",
-                                 command=self.refresh_all,
-                                 style="Accent.TButton")
-        refresh_btn.pack(side=tk.RIGHT)
-
-        # 初回読み込み
         self.refresh_all()
 
     def refresh_all(self):
@@ -116,7 +115,7 @@ class NewsGadget:
             txt = self.text_widgets[cat]
             txt.config(state=tk.NORMAL)
             txt.delete('1.0', tk.END)
-            txt.insert(tk.END, f"\n   Fetching latest {cat} news...\n", "date")
+            txt.insert(tk.END, f"\n   最新の {cat} 情報を取得中...\n", "date")
             txt.config(state=tk.DISABLED)
             threading.Thread(target=self.fetch_news, args=(cat,), daemon=True).start()
 
@@ -133,46 +132,94 @@ class NewsGadget:
             root = ET.fromstring(content)
             items = root.findall('./channel/item')
 
-            self.root.after(0, self.update_display, category, items)
+            # 画像取得をトップ記事のみ試行
+            featured_image = None
+            if items:
+                top_link = items[0].find('link').text
+                featured_image = self.get_og_image(top_link)
+
+            self.root.after(0, self.update_display, category, items, featured_image)
 
         except Exception as e:
             self.root.after(0, lambda: self.show_error(category, str(e)))
 
-    def update_display(self, category, items):
+    def get_og_image(self, url):
+        try:
+            # Google Newsのリンクはリダイレクトされるため、実際のページを取得
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                html = response.read().decode('utf-8', errors='ignore')
+
+            # og:image タグを正規表現で探す
+            match = re.search(r'<meta [^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']', html)
+            if not match:
+                match = re.search(r'<meta [^>]*content=["\']([^"\']+)["\'][^>]*property=["\']og:image["\']', html)
+
+            if match:
+                img_url = html_lib.unescape(match.group(1))
+                if img_url.startswith('//'):
+                    img_url = 'https:' + img_url
+                elif img_url.startswith('/'):
+                    parsed_url = urllib.parse.urlparse(url)
+                    img_url = f"{parsed_url.scheme}://{parsed_url.netloc}{img_url}"
+                elif not img_url.startswith('http'):
+                    parsed_url = urllib.parse.urlparse(url)
+                    base_path = parsed_url.path.rsplit('/', 1)[0]
+                    img_url = f"{parsed_url.scheme}://{parsed_url.netloc}{base_path}/{img_url}"
+
+                with urllib.request.urlopen(img_url, timeout=5) as img_res:
+                    img_data = img_res.read()
+
+                img = Image.open(BytesIO(img_data))
+                img.thumbnail((600, 300)) # 横幅最大600にリサイズ
+                return img
+        except:
+            pass
+        return None
+
+    def update_display(self, category, items, featured_img_obj):
         txt = self.text_widgets[category]
         txt.config(state=tk.NORMAL)
         txt.delete('1.0', tk.END)
 
         if not items:
-            txt.insert(tk.END, "\n   No news found.", "date")
+            txt.insert(tk.END, "\n   ニュースが見つかりませんでした。", "date")
             txt.config(state=tk.DISABLED)
             return
 
+        # 画像の処理と表示（メインスレッドで実行）
+        if featured_img_obj:
+            try:
+                photo = ImageTk.PhotoImage(featured_img_obj)
+                self.images[f"{category}_top"] = photo
+                txt.image_create(tk.END, image=photo)
+                txt.insert(tk.END, "\n")
+            except:
+                pass
+
         for i, item in enumerate(items):
-            title_elem = item.find('title')
-            link_elem = item.find('link')
-            pub_date_elem = item.find('pubDate')
+            title = item.find('title').text
+            link = item.find('link').text
+            pub_date = item.find('pubDate').text
 
-            title = title_elem.text if title_elem is not None else "No Title"
-            link = link_elem.text if link_elem is not None else ""
-            pub_date = pub_date_elem.text if pub_date_elem is not None else ""
+            tag_name = f"link_{category}_{i}"
 
-            # 日付
-            if pub_date:
+            if i == 0:
+                # トップ記事
+                txt.insert(tk.END, f"🌟 FEATURED STORY\n", "date")
+                txt.insert(tk.END, title + "\n", ("featured_title", tag_name))
+            else:
+                # 通常記事
                 txt.insert(tk.END, f"🗓 {pub_date}\n", "date")
+                txt.insert(tk.END, title + "\n", ("title", tag_name))
 
-            # タイトル
-            tag_name = f"link_{i}"
-            txt.insert(tk.END, title + "\n", ("title", tag_name))
+            # 共通設定
+            txt.tag_bind(tag_name, "<Button-1>", lambda e, l=link: webbrowser.open(l))
+            txt.tag_bind(tag_name, "<Enter>", lambda e: txt.config(cursor="hand2"))
+            txt.tag_bind(tag_name, "<Leave>", lambda e: txt.config(cursor="arrow"))
+            txt.tag_configure(tag_name, foreground="#1b5e20", underline=True)
 
-            # リンクイベント
-            if link:
-                txt.tag_bind(tag_name, "<Button-1>", lambda e, l=link: webbrowser.open(l))
-                txt.tag_bind(tag_name, "<Enter>", lambda e: txt.config(cursor="hand2"))
-                txt.tag_bind(tag_name, "<Leave>", lambda e: txt.config(cursor="arrow"))
-
-            # セパレーター
-            txt.insert(tk.END, "─" * 40 + "\n\n", "separator")
+            txt.insert(tk.END, "\n" + "─" * 60 + "\n\n", "sep")
 
         txt.config(state=tk.DISABLED)
 
@@ -180,7 +227,7 @@ class NewsGadget:
         txt = self.text_widgets[category]
         txt.config(state=tk.NORMAL)
         txt.delete('1.0', tk.END)
-        txt.insert(tk.END, f"\n   Error: {error_msg}", "date")
+        txt.insert(tk.END, f"\n   エラーが発生しました: {error_msg}", "date")
         txt.config(state=tk.DISABLED)
 
 if __name__ == "__main__":
