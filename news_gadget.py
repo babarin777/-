@@ -13,10 +13,9 @@ except ImportError:
     messagebox.showerror(
         "実行エラー",
         "必要なライブラリ（requests, feedparser）が見つかりません。\n\n"
-        "コマンドプロンプトを開き、以下のいずれかのコマンドを入力して「Enter」キーを押してください：\n\n"
-        "1.  pip install requests feedparser\n"
-        "2.  python -m pip install requests feedparser\n"
-        "3.  py -m pip install requests feedparser\n\n"
+        "コマンドプロンプトを開き、以下のコマンドを【一文字ずつ正確に】入力して「Enter」を押してください：\n\n"
+        "py -m pip install requests feedparser\n\n"
+        "※「-m」の後の「pip」を入れ忘れるとエラーになります。\n"
         "※インストール完了後、このファイルを再度実行してください。"
     )
     sys.exit(1)
