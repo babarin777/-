@@ -14,17 +14,18 @@ except ImportError:
         "必要なライブラリ（requests, feedparser）が見つかりません。\n\n"
         "コマンドプロンプトを開き、以下のコマンドを【一文字ずつ正確に】入力して「Enter」を押してください：\n\n"
         "py -m pip install requests feedparser\n\n"
+        "※「-m」の後の「pip」を入れ忘れるとエラーになります。\n"
         "※インストール完了後、このファイルを再度実行してください。"
     )
     sys.exit(1)
 
 import threading
 import webbrowser
-from urllib.parse import quote
+from urllib.parse import quote_plus
 
 # 1. ニュース分野と背景色の設定
 CATEGORIES = [
-    {"label": "AI関連", "q": "AI OR 人工知能 OR 生成AI", "color": "#F0F8FF"}, # AliceBlue
+    {"label": "AI関連", "q": "人工知能 OR 生成AI OR AI", "color": "#F0F8FF"}, # AliceBlue
     {"label": "再エネ", "q": "再生可能エネルギー OR 再エネ OR 太陽光 OR 風力", "color": "#FFF0F5"}, # LavenderBlush
     {"label": "EV", "q": "電気自動車 OR EV OR テスラ OR 自動運転", "color": "#F0FFF0"}    # Honeydew
 ]
@@ -38,6 +39,15 @@ class TabbedNewsGadget:
         self.root = root
         self.root.title("News Gadget")
         self.root.geometry("500x700")
+
+        # セッションとクッキーの設定（Googleの同意画面回避）
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Referer": "https://news.google.com/"
+        })
+        self.session.cookies.set("CONSENT", "YES+", domain=".google.com")
 
         # フォント設定
         self.default_font = MAIN_FONT
@@ -106,15 +116,17 @@ class TabbedNewsGadget:
             self.root.after(0, self.display_category, cat["label"], items)
 
     def fetch_news(self, query):
-        url = f"https://news.google.com/rss/search?q={quote(query)}&hl=ja&gl=JP&ceid=JP:ja"
+        url = f"https://news.google.com/rss/search?q={quote_plus(query)}&hl=ja&gl=JP&ceid=JP:ja"
         try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
             try:
-                r = requests.get(url, headers=headers, timeout=15)
-            except requests.exceptions.SSLError:
-                r = requests.get(url, headers=headers, timeout=15, verify=False)
+                r = self.session.get(url, timeout=15)
+            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
+                # SSLエラーや接続エラー時の回避策
+                r = self.session.get(url, timeout=15, verify=False)
 
-            if r.status_code != 200: return []
+            if r.status_code != 200:
+                print(f"Fetch Error ({query}): HTTP {r.status_code}")
+                return []
 
             feed = feedparser.parse(r.content)
 
@@ -135,7 +147,8 @@ class TabbedNewsGadget:
             final_entries = (priority_nikkei + remaining_entries)[:20]
 
             return final_entries
-        except:
+        except Exception as e:
+            print(f"Error fetching {query}: {e}")
             return []
 
     def display_category(self, label, items):
