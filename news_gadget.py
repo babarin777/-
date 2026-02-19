@@ -20,12 +20,12 @@ class NewsGadget:
         self.stay_on_top = tk.BooleanVar(value=False)
 
         # Configure fonts
-        # Prioritize Japanese fonts if available
-        self.font_fallbacks = ("Helvetica", "Arial", "Yu Gothic", "Meiryo", "sans-serif")
-        self.title_font = (self.font_fallbacks, 11, "bold")
-        self.source_font = (self.font_fallbacks, 9)
-        self.date_font = (self.font_fallbacks, 8)
-        self.header_font = (self.font_fallbacks, 16, "bold")
+        # Choose the first available font
+        self.base_font = self._get_best_font()
+        self.title_font = (self.base_font, 11, "bold")
+        self.source_font = (self.base_font, 9)
+        self.date_font = (self.base_font, 8)
+        self.header_font = (self.base_font, 16, "bold")
 
         # Keywords and Colors
         self.categories = [
@@ -41,6 +41,13 @@ class NewsGadget:
         # Top Control Bar
         self.control_bar = tk.Frame(self.root, bg="#333", pady=5)
         self.control_bar.pack(side="top", fill="x")
+
+        self.refresh_btn = tk.Button(
+            self.control_bar, text="更新", command=self.fetch_all_news,
+            bg="#555", fg="white", activebackground="#777", activeforeground="white",
+            relief="flat", padx=10
+        )
+        self.refresh_btn.pack(side="left", padx=10)
 
         self.top_toggle = tk.Checkbutton(
             self.control_bar, text="最前面表示", variable=self.stay_on_top,
@@ -70,7 +77,7 @@ class NewsGadget:
         # Log Area
         self.log_frame = tk.Frame(self.root, bg="#eee", height=20)
         self.log_frame.pack(side="bottom", fill="x")
-        self.log_label = tk.Label(self.log_frame, text="Ready", font=(self.font_fallbacks, 7), bg="#eee", fg="#666")
+        self.log_label = tk.Label(self.log_frame, text="Ready", font=(self.base_font, 7), bg="#eee", fg="#666")
         self.log_label.pack(side="left", padx=5)
 
         # Mouse wheel binding - localized to activate on Enter and deactivate on Leave
@@ -98,15 +105,29 @@ class NewsGadget:
         else:
             self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
+    def _get_best_font(self):
+        from tkinter import font
+        available = font.families()
+        for f in ("Yu Gothic", "Meiryo", "Hiragino Kaku Gothic ProN", "MS PGothic", "Helvetica", "Arial"):
+            if f in available:
+                return f
+        return "sans-serif"
+
     def toggle_stay_on_top(self):
         self.root.attributes("-topmost", self.stay_on_top.get())
 
     def fetch_all_news(self):
+        # Clear existing content
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+
+        self.log("Fetching news...")
         for cat in self.categories:
             threading.Thread(target=self.fetch_category_news, args=(cat,), daemon=True).start()
 
     def log(self, message):
-        self.root.after(0, lambda: self.log_label.config(text=message))
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.root.after(0, lambda: self.log_label.config(text=f"[{timestamp}] {message}"))
 
     def fetch_category_news(self, category):
         keyword = category["keyword"]
@@ -146,18 +167,21 @@ class NewsGadget:
         return score
 
     def display_category(self, category, entries):
-        # Category Section Frame
-        section_frame = tk.Frame(self.scrollable_frame, bg=category["bg_color"], pady=15)
-        section_frame.pack(fill="x", expand=True)
+        try:
+            # Category Section Frame
+            section_frame = tk.Frame(self.scrollable_frame, bg=category["bg_color"], pady=15)
+            section_frame.pack(fill="x", expand=True)
 
-        # Header
-        header_label = tk.Label(section_frame, text=category["display_name"],
-                                font=self.header_font, bg=category["bg_color"],
-                                fg="#333", pady=10)
-        header_label.pack(anchor="w", padx=20)
+            # Header
+            header_label = tk.Label(section_frame, text=category["display_name"],
+                                    font=self.header_font, bg=category["bg_color"],
+                                    fg="#333", pady=10)
+            header_label.pack(anchor="w", padx=20)
 
-        for entry in entries:
-            self.create_article_card(section_frame, entry, category["bg_color"])
+            for entry in entries:
+                self.create_article_card(section_frame, entry, category["bg_color"])
+        except Exception as e:
+            self.log(f"Display error {category['keyword']}: {e}")
 
     def create_article_card(self, parent, entry, section_bg):
         card = tk.Frame(parent, bg="white", highlightthickness=1, highlightbackground="#e0e0e0", pady=10, padx=15)
@@ -178,7 +202,7 @@ class NewsGadget:
         title_label.pack(anchor="w")
 
         if is_nikkei:
-            nikkei_badge = tk.Label(content_frame, text="日経優先", font=(self.font_fallbacks, 7, "bold"),
+            nikkei_badge = tk.Label(content_frame, text="日経優先", font=(self.base_font, 7, "bold"),
                                    bg="#ff4500", fg="white", padx=5)
             nikkei_badge.pack(anchor="w", pady=(2, 0))
         title_label.bind("<Button-1>", lambda e: webbrowser.open(entry.link))
