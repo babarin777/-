@@ -204,42 +204,41 @@ class KeywordNewsGadget:
             widget.destroy()
 
     def fetch_keyword(self, index, keyword):
-        self.clear_container(index)
-        tk.Label(self.scroll_containers[index], text="読み込み中...", bg=COLORS[index]["bg"], fg=COLOR_TEXT_SUB, font=FONT_M, pady=20).pack()
+        self.root.after(0, lambda: self.show_loading(index))
 
-        # 日経を優先するためのクエリ工夫
-        # Google News RSSで特定ソースを優先するのは難しいが、検索ワードに含めることは可能
-        # ここではまずキーワードで検索し、取得後に日経の記事を上位に並べ替える手法をとる
         encoded_query = urllib.parse.quote(keyword)
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ja&gl=JP&ceid=JP:ja"
 
         try:
+            logging.info(f"Fetching RSS: {url}")
             response = requests.get(url, headers=self.headers, timeout=15)
             feed = feedparser.parse(response.content)
 
             if not feed.entries:
+                logging.info(f"No entries for {keyword}")
                 self.root.after(0, lambda: self.show_message(index, "記事が見つかりませんでした。"))
                 return
 
             # 日経関連の優先順位付け
-            # 1. 日本経済新聞 (Nikkei)
-            # 2. その他
-            sorted_entries = sorted(feed.entries, key=lambda e: not ("日本経済新聞" in (e.source.title if hasattr(e, 'source') else "") or "日経" in e.title))
+            sorted_entries = sorted(feed.entries, key=lambda e: not (
+                (hasattr(e, 'source') and "日本経済新聞" in e.source.title) or
+                "日経" in e.title
+            ))
 
-            # 上位15件を表示
-            entries_to_process = sorted_entries[:15]
+            # 上位20件を表示
+            entries_to_process = sorted_entries[:20]
 
             processed_data = []
-            for entry in entries_to_process:
+            for i, entry in enumerate(entries_to_process):
                 img_obj = None
-                # 上位5件のみ画像取得
-                if entries_to_process.index(entry) < 5:
+                # 上位3件のみ画像取得（レスポンス向上のため削減、タイムアウト短縮）
+                if i < 3:
                     img_obj = self.get_og_image(entry.link)
 
                 processed_data.append({
                     "title": entry.title,
                     "link": entry.link,
-                    "date": entry.published if hasattr(entry, 'published') else "",
+                    "date": getattr(entry, 'published', ""),
                     "source": entry.source.title if hasattr(entry, 'source') else "News",
                     "image": img_obj
                 })
@@ -247,12 +246,18 @@ class KeywordNewsGadget:
             self.root.after(0, lambda: self.update_ui(index, processed_data))
 
         except Exception as e:
-            logging.error(f"Error fetching keyword {keyword}: {e}")
-            self.root.after(0, lambda: self.show_message(index, f"エラーが発生しました: {e}", is_error=True))
+            logging.error(f"Error fetching keyword {keyword}: {e}", exc_info=True)
+            self.root.after(0, lambda: self.show_message(index, f"エラーが発生しました: {str(e)}", is_error=True))
+
+    def show_loading(self, index):
+        self.clear_container(index)
+        tk.Label(self.scroll_containers[index], text="⏳ 読み込み中...",
+                 bg=COLORS[index]["bg"], fg=COLOR_TEXT_SUB, font=FONT_M, pady=40).pack()
 
     def get_og_image(self, url):
         try:
-            res = requests.get(url, headers=self.headers, timeout=5)
+            # タイムアウトを短縮し、リダイレクトを制限
+            res = requests.get(url, headers=self.headers, timeout=3, allow_redirects=True)
             html = res.text
             match = re.search(r'<meta [^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']', html)
             if not match:
@@ -265,19 +270,17 @@ class KeywordNewsGadget:
                     parsed = urllib.parse.urlparse(url)
                     img_url = f"{parsed.scheme}://{parsed.netloc}{img_url}"
 
-                img_res = requests.get(img_url, headers=self.headers, timeout=5)
+                img_res = requests.get(img_url, headers=self.headers, timeout=3)
                 img = Image.open(BytesIO(img_res.content))
                 img.thumbnail((800, 400))
                 return img
-        except:
-            pass
+        except Exception as e:
+            logging.debug(f"Image fetch failed for {url}: {e}")
         return None
 
     def update_ui(self, index, data):
         container = self.scroll_containers[index]
         self.clear_container(index)
-
-        bg_color = COLORS[index]["bg"]
 
         for item in data:
             photo = None
@@ -290,6 +293,14 @@ class KeywordNewsGadget:
             card = NewsCard(container, item["title"], item["link"], item["date"],
                             item["source"], photo, card_bg=COLOR_CARD)
             card.pack(fill=tk.X, padx=20, pady=10)
+
+        # スクロール領域の強制更新
+        self.root.update_idletasks()
+        for i, frame in enumerate(self.scroll_containers):
+            # 親のキャンバスを取得して更新
+            canvas = frame.master
+            if isinstance(canvas, tk.Canvas):
+                canvas.configure(scrollregion=canvas.bbox("all"))
 
         self.status_var.set("完了")
 
