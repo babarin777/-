@@ -1,6 +1,24 @@
 # 依存ライブラリ不要のWindows用ニュースガジェット (PowerShell版)
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 
+# --- 社内網・セキュリティ対策設定 ---
+# モダンなTLSプロトコルを強制
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+
+# SSL証明書の検証エラーを無視する設定（社内網でのSSLインターセプト対策）
+if (-not ("TrustAllCertsPolicy" -as [type])) {
+    Add-Type -TypeDefinition @"
+    using System.Net;
+    using System.Security.Cryptography.X509Certificates;
+    public class TrustAllCertsPolicy : ICertificatePolicy {
+        public bool CheckValidationResult(ServicePoint srvPoint, X509Certificate certificate, WebRequest request, int certificateProblem) {
+            return true;
+        }
+    }
+"@
+    [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+}
+
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -69,12 +87,16 @@ function Get-News {
     $url = "https://news.google.com/rss/search?q=$encoded&hl=ja&gl=JP&ceid=JP:ja"
 
     $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    # プロキシで現在のユーザーの認証情報を使用する
+    $session.ProxyUseDefaultCredentials = $true
+
     $cookie = New-Object System.Net.Cookie("CONSENT", "YES+", "/", ".google.com")
     $session.Cookies.Add($cookie)
 
     $headers = @{
-        "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"
+        "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         "Accept-Language" = "ja,en-US;q=0.9,en;q=0.8"
+        "Referer" = "https://news.google.com/"
     }
 
     try {
