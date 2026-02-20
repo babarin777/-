@@ -3,7 +3,11 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 # --- 社内網・セキュリティ対策設定 ---
 # モダンなTLSプロトコルを強制
-[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12, [System.Net.SecurityProtocolType]::Tls11, [System.Net.SecurityProtocolType]::Tls
+
+# システムプロキシの利用設定をプロセス全体に適用
+[System.Net.WebRequest]::DefaultWebProxy = [System.Net.WebRequest]::GetSystemWebProxy()
+[System.Net.WebRequest]::DefaultWebProxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
 
 # SSL証明書の検証エラーを無視する設定（社内網でのSSLインターセプト対策）
 if (-not ("TrustAllCertsPolicy" -as [type])) {
@@ -101,6 +105,7 @@ function Get-News {
 
     try {
         $xml = Invoke-RestMethod -Uri $url -WebSession $session -Headers $headers -TimeoutSec 15
+        $global:LastPsError = $null
         $items = $xml.rss.channel.item
         if ($null -eq $items) { return @() }
 
@@ -129,6 +134,7 @@ function Get-News {
 
         return ($priority + $rest) | Select-Object -First 20
     } catch {
+        $global:LastPsError = $_.Exception.Message
         return @()
     }
 }
@@ -138,8 +144,11 @@ function Render-Category {
     $panel.Children.Clear()
     if ($null -eq $items -or $items.Count -eq 0) {
         $err = New-Object System.Windows.Controls.TextBlock
-        $err.Text = "記事を取得できませんでした"
+        $msg = "記事を取得できませんでした"
+        if ($global:LastPsError) { $msg += "`n`n詳細: " + $global:LastPsError }
+        $err.Text = $msg
         $err.Margin = "50"
+        $err.TextAlignment = "Center"
         $err.HorizontalAlignment = "Center"
         $panel.Children.Add($err)
         return

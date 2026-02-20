@@ -3,7 +3,12 @@ from tkinter import ttk, messagebox
 import sys
 import threading
 import webbrowser
+import os
 from urllib.parse import quote_plus
+import urllib3
+
+# SSL警告を非表示にする（社内網対策の verify=False 用）
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 1. 依存ライブラリのチェック ---
 try:
@@ -105,13 +110,24 @@ class RobustNewsGadget:
         """GoogleニュースRSSから取得（SSL/プロキシ対策込み）"""
         url = f"https://news.google.com/rss/search?q={quote_plus(query)}&hl=ja&gl=JP&ceid=JP:ja"
         try:
+            # プロキシ設定のデバッグ情報をコンソールに出力
+            if not hasattr(self, '_proxy_logged'):
+                print(f"DEBUG: Proxy Environment - HTTP_PROXY: {os.environ.get('HTTP_PROXY')}, HTTPS_PROXY: {os.environ.get('HTTPS_PROXY')}")
+                self._proxy_logged = True
+
             try:
+                # まずは標準の接続を試行
                 r = self.session.get(url, timeout=15)
-            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
-                # SSLエラー時に検証をスキップして再試行
+            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+                self._last_error = str(e)
+                print(f"DEBUG: Initial fetch failed for {query}, retrying with verify=False. Error: {e}")
+                # 失敗した場合はSSL検証をスキップして再試行
                 r = self.session.get(url, timeout=15, verify=False)
 
-            if r.status_code != 200: return []
+            if r.status_code != 200:
+                self._last_error = f"HTTP {r.status_code}"
+                print(f"DEBUG: Fetch Error {r.status_code} for {query}")
+                return []
 
             feed = feedparser.parse(r.content)
 
@@ -135,7 +151,11 @@ class RobustNewsGadget:
         for w in tab["frame"].winfo_children(): w.destroy()
 
         if not items:
-            tk.Label(tab["frame"], text="記事が見つかりませんでした", bg=tab["color"], font=MAIN_FONT).pack(pady=50)
+            error_msg = "記事が見つかりませんでした"
+            if hasattr(self, '_last_error'):
+                error_msg += f"\n\n詳細: {self._last_error}"
+
+            tk.Label(tab["frame"], text=error_msg, bg=tab["color"], font=MAIN_FONT, justify="center").pack(pady=50)
             return
 
         for item in items:
