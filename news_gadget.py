@@ -1,3 +1,4 @@
+# Windows環境でPython未インストールの場合は run_news_gadget.bat を使用してください。
 import tkinter as tk
 from tkinter import ttk, messagebox
 import sys
