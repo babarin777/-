@@ -27,9 +27,9 @@ except ImportError:
 
 # --- 2. 設定：ニュース分野と背景色 ---
 CATEGORIES = [
-    {"label": "AI関連", "q": "人工知能 OR 生成AI OR AI", "color": "#F0F8FF"}, # AliceBlue
-    {"label": "再エネ", "q": "再生可能エネルギー OR 再エネ OR 太陽光", "color": "#FFF0F5"}, # LavenderBlush
-    {"label": "EV", "q": "電気自動車 OR EV OR テスラ", "color": "#F0FFF0"}    # Honeydew
+    {"label": "AI関連", "q": "AI OR 人工知能", "color": "#F0F8FF"}, # AliceBlue
+    {"label": "再エネ", "q": "再生可能エネルギー OR 再エネ", "color": "#FFF0F5"}, # LavenderBlush
+    {"label": "EV", "q": "電気自動車 OR EV", "color": "#F0FFF0"}    # Honeydew
 ]
 
 # フォント設定
@@ -108,39 +108,38 @@ class RobustNewsGadget:
 
     def fetch_news(self, query):
         """GoogleニュースRSSから取得（SSL/プロキシ対策込み）"""
-        # PCから直接読み込むのに近い形式のURL（output=rssパラメータを使用）
-        url = f"https://news.google.com/search?q={quote_plus(query)}&hl=ja&gl=JP&ceid=JP:ja&output=rss"
+        url = f"https://news.google.com/rss/search?q={quote_plus(query)}&hl=ja&gl=JP&ceid=JP:ja"
         try:
-            # プロキシ設定のデバッグ情報をコンソールに出力
-            if not hasattr(self, '_proxy_logged'):
-                print(f"DEBUG: Proxy Environment - HTTP_PROXY: {os.environ.get('HTTP_PROXY')}, HTTPS_PROXY: {os.environ.get('HTTPS_PROXY')}")
-                self._proxy_logged = True
-
             try:
                 # まずは標準の接続を試行
                 r = self.session.get(url, timeout=15)
             except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
-                self._last_error = f"接続エラー: {e}"
-                print(f"DEBUG: Initial fetch failed for {query}, retrying with verify=False. Error: {e}")
                 # 失敗した場合はSSL検証をスキップして再試行
                 r = self.session.get(url, timeout=15, verify=False)
 
             if r.status_code != 200:
                 self._last_error = f"HTTPエラー {r.status_code}"
-                print(f"DEBUG: Fetch Error {r.status_code} for {query}")
                 return []
 
-            # 取得した内容がHTML（ブロック画面）でないかチェック
-            content_snippet = r.text[:200].lower()
-            if "<html" in content_snippet or "<!doctype html" in content_snippet:
-                self._last_error = "社内のURLフィルタリングにより、RSSではなくブロック画面が返されました。"
+            # 受信内容のデバッグ用
+            content = r.text
+            if not content.strip():
+                self._last_error = "受信内容が空です。"
+                return []
+
+            # フィルタリングチェック
+            if "<html" in content.lower()[:200]:
+                if "consent.google.com" in r.url:
+                    self._last_error = "Googleの同意画面にブロックされました。クッキー設定を確認してください。"
+                else:
+                    self._last_error = "社内フィルタ等によりブロックされた可能性があります。"
                 return []
 
             feed = feedparser.parse(r.content)
 
             if not feed.entries:
-                snippet = r.text[:100].replace('\n', ' ')
-                self._last_error = f"受信したデータに記事が含まれていません。(冒頭: {snippet}...)"
+                snippet = content[:100].replace('\n', ' ')
+                self._last_error = f"記事が見つかりません。 (内容: {snippet}...)"
                 return []
 
             # --- ソートロジック ---

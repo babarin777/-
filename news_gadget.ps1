@@ -88,8 +88,7 @@ if (-not ("Main.Web" -as [type])) {
 function Get-News {
     param($query)
     $encoded = [Main.Web]::UrlEncode($query)
-    # ブラウザでの直接検索に近い形式のURL
-    $url = "https://news.google.com/search?q=$encoded&hl=ja&gl=JP&ceid=JP:ja&output=rss"
+    $url = "https://news.google.com/rss/search?q=$encoded&hl=ja&gl=JP&ceid=JP:ja"
 
     $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     # プロキシで現在のユーザーの認証情報を使用する
@@ -109,16 +108,20 @@ function Get-News {
         $response = Invoke-WebRequest -Uri $url -WebSession $session -Headers $headers -TimeoutSec 15 -UseBasicParsing
 
         $content = $response.Content
-        if ($content -like "*<html*" -or $content -like "*<!doctype html*") {
-            $global:LastPsError = "社内のURLフィルタリングによりRSSが遮断されました。"
+        if ($content -like "*<html*") {
+            if ($response.BaseResponse.ResponseUri -like "*consent.google.com*") {
+                $global:LastPsError = "Googleの同意画面にブロックされました。クッキー設定を確認してください。"
+            } else {
+                $global:LastPsError = "社内フィルタ等によりRSS取得がブロックされました。"
+            }
             return @()
         }
 
         [xml]$xml = $content
         $items = $xml.rss.channel.item
         if ($null -eq $items) {
-            $snippet = $content.Substring(0, [Math]::Min(100, $content.Length)).Replace("`n", " ")
-            $global:LastPsError = "記事データが見つかりません。(冒頭: $snippet...)"
+            $snippet = $content.Substring(0, [Math]::Min(50, $content.Length)).Replace("`n", " ")
+            $global:LastPsError = "記事が見つかりません。 (内容: $snippet...)"
             return @()
         }
 
