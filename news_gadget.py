@@ -6,6 +6,7 @@ import webbrowser
 import os
 from urllib.parse import quote_plus
 import urllib3
+import datetime
 
 # SSL警告を非表示にする（社内網対策の verify=False 用）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -37,6 +38,7 @@ FONT_FAMILY = "Meiryo UI"
 MAIN_FONT = (FONT_FAMILY, 10)
 TITLE_FONT = (FONT_FAMILY, 11, "bold")
 SMALL_FONT = (FONT_FAMILY, 8)
+BADGE_FONT = (FONT_FAMILY, 8, "bold")
 
 class RobustNewsGadget:
     def __init__(self, root):
@@ -57,8 +59,15 @@ class RobustNewsGadget:
         header = tk.Frame(root)
         header.pack(fill="x", pady=10)
 
-        tk.Button(header, text="最新ニュースに更新", command=self.refresh,
-                  font=TITLE_FONT, bg="#f0f0f0", padx=20).pack()
+        btn_frame = tk.Frame(header)
+        btn_frame.pack()
+
+        tk.Button(btn_frame, text="最新ニュースに更新", command=self.refresh,
+                  font=TITLE_FONT, bg="#f0f0f0", padx=20).pack(side="left")
+
+        self.stay_on_top = tk.BooleanVar(value=False)
+        tk.Checkbutton(btn_frame, text="最前面に表示", variable=self.stay_on_top,
+                       command=self.toggle_topmost, font=MAIN_FONT).pack(side="left", padx=10)
 
         # タブデザインの設定
         style = ttk.Style()
@@ -86,13 +95,18 @@ class RobustNewsGadget:
 
             self.tabs[cat["label"]] = {"frame": content, "canvas": canvas, "color": cat["color"]}
 
-        tk.Label(root, text="※表示されない場合はネットワーク設定を確認してください",
-                 font=SMALL_FONT, fg="gray").pack(fill="x", pady=2)
+        self.status_label = tk.Label(root, text="※表示されない場合はネットワーク設定を確認してください",
+                                     font=SMALL_FONT, fg="gray")
+        self.status_label.pack(fill="x", pady=2)
 
         self.refresh()
 
+    def toggle_topmost(self):
+        self.root.attributes("-topmost", self.stay_on_top.get())
+
     def refresh(self):
         """全タブを読み込み状態にする"""
+        self.status_label.config(text="取得中...")
         for label, tab in self.tabs.items():
             for w in tab["frame"].winfo_children(): w.destroy()
             tk.Label(tab["frame"], text="読み込み中...", bg=tab["color"], font=MAIN_FONT).pack(pady=50)
@@ -106,22 +120,33 @@ class RobustNewsGadget:
             items = self.fetch_news(cat["q"])
             self.root.after(0, self.display_category, cat["label"], items)
 
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        self.root.after(0, lambda: self.status_label.config(text=f"最終更新: {now}"))
+
     def fetch_news(self, query):
         """GoogleニュースRSSから取得（SSL/プロキシ対策込み）"""
         url = f"https://news.google.com/rss/search?q={quote_plus(query)}&hl=ja&gl=JP&ceid=JP:ja"
+        last_err = ""
         try:
+            r = None
             try:
-                # まずは標準の接続を試行
-                r = self.session.get(url, timeout=15)
-            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
-                # 失敗した場合はSSL検証をスキップして再試行
-                r = self.session.get(url, timeout=15, verify=False)
+                # 1. 標準セッション
+                r = self.session.get(url, timeout=10)
+            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
+                # 2. SSL検証なし
+                try:
+                    r = self.session.get(url, timeout=10, verify=False)
+                except Exception as e:
+                    last_err = str(e)
 
-            if r.status_code != 200:
-                self._last_error = f"HTTPエラー {r.status_code}"
+            if not r:
+                self._last_error = f"接続失敗 ({last_err})"
                 return []
 
-            # 受信内容のデバッグ用
+            if r.status_code != 200:
+                self._last_error = f"HTTPエラー {r.status_code} (URL: {r.url})"
+                return []
+
             content = r.text
             if not content.strip():
                 self._last_error = "受信内容が空です。"
@@ -130,30 +155,30 @@ class RobustNewsGadget:
             # フィルタリングチェック
             if "<html" in content.lower()[:200]:
                 if "consent.google.com" in r.url:
-                    self._last_error = "Googleの同意画面にブロックされました。クッキー設定を確認してください。"
+                    self._last_error = "Googleの同意画面にブロックされました。"
                 else:
-                    self._last_error = "社内フィルタ等によりブロックされた可能性があります。"
+                    self._last_error = f"社内フィルタ等によりRSS取得が拒否されました。(Content-Type: {r.headers.get('Content-Type')})"
                 return []
 
             feed = feedparser.parse(r.content)
 
             if not feed.entries:
                 snippet = content[:100].replace('\n', ' ')
-                self._last_error = f"記事が見つかりません。 (内容: {snippet}...)"
+                self._last_error = f"RSSデータがありません。 (内容: {snippet})"
                 return []
 
             # --- ソートロジック ---
-            # 1. 全記事を日付順に並める
             all_items = sorted(feed.entries, key=lambda e: e.get("published_parsed") or (0,), reverse=True)
-            # 2. 日経関連とそれ以外を分ける
             nikkei = [e for e in all_items if "日本経済新聞" in e.get("source", {}).get("title", "")]
             others = [e for e in all_items if "日本経済新聞" not in e.get("source", {}).get("title", "")]
-            # 3. 日経上位3件を優先枠とし、残りは日付順で統合
+
             final = (nikkei[:3] + sorted(nikkei[3:] + others,
                                         key=lambda e: e.get("published_parsed") or (0,),
                                         reverse=True))[:20]
+            self._last_error = None
             return final
-        except:
+        except Exception as e:
+            self._last_error = f"実行時エラー: {str(e)}"
             return []
 
     def display_category(self, label, items):
@@ -163,10 +188,11 @@ class RobustNewsGadget:
 
         if not items:
             error_msg = "記事が見つかりませんでした"
-            if hasattr(self, '_last_error'):
-                error_msg += f"\n\n詳細: {self._last_error}"
+            if hasattr(self, '_last_error') and self._last_error:
+                error_msg += f"\n\n(詳細: {self._last_error})"
 
-            tk.Label(tab["frame"], text=error_msg, bg=tab["color"], font=MAIN_FONT, justify="center").pack(pady=50)
+            tk.Label(tab["frame"], text=error_msg, bg=tab["color"], font=MAIN_FONT,
+                     justify="center", wraplength=400).pack(pady=50)
             return
 
         for item in items:
@@ -175,15 +201,15 @@ class RobustNewsGadget:
 
             source = item.get("source", {}).get("title", "不明")
             if "日本経済新聞" in source:
-                tk.Label(card, text="日経新聞", bg="#003399", fg="white", font=SMALL_FONT, padx=5).pack(anchor="w", pady=(0,5))
+                tk.Label(card, text="日経優先", bg="#003399", fg="white", font=BADGE_FONT,
+                         padx=5, pady=2).pack(anchor="w", pady=(0,5))
 
-            title = tk.Label(card, text=item.title, wraplength=400, justify="left",
+            title_label = tk.Label(card, text=item.title, wraplength=400, justify="left",
                             bg="white", fg="#0000EE", cursor="hand2", font=TITLE_FONT)
-            title.pack(anchor="w")
-            title.bind("<Button-1>", lambda e, url=item.link: webbrowser.open(url))
-            # ホバーエフェクト
-            title.bind("<Enter>", lambda e, t=title: t.configure(font=(FONT_FAMILY, 11, "bold", "underline")))
-            title.bind("<Leave>", lambda e, t=title: t.configure(font=TITLE_FONT))
+            title_label.pack(anchor="w")
+            title_label.bind("<Button-1>", lambda e, url=item.link: webbrowser.open(url))
+            title_label.bind("<Enter>", lambda e, t=title_label: t.configure(font=(FONT_FAMILY, 11, "bold", "underline")))
+            title_label.bind("<Leave>", lambda e, t=title_label: t.configure(font=TITLE_FONT))
 
             tk.Label(card, text=f"{source} | {item.get('published', '')}",
                      font=SMALL_FONT, bg="white", fg="gray").pack(anchor="w", pady=(5,0))

@@ -27,7 +27,7 @@ $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="News Gadget" Height="700" Width="500" Background="White"
-        FontFamily="Meiryo UI">
+        FontFamily="Meiryo UI" Topmost="False">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -35,8 +35,11 @@ $xaml = @"
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Button Name="BtnRefresh" Content="ニュースを更新" Margin="10" Padding="10"
-                FontFamily="Meiryo UI" FontSize="14" FontWeight="Bold"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+            <Button Name="BtnRefresh" Content="ニュースを更新" Margin="10" Padding="15,5"
+                    FontFamily="Meiryo UI" FontSize="14" FontWeight="Bold"/>
+            <CheckBox Name="CheckTopmost" Content="最前面に表示" VerticalAlignment="Center" Margin="10,0,0,0"/>
+        </StackPanel>
 
         <TabControl Name="Tabs" Grid.Row="1" Margin="10,0,10,10" FontFamily="Meiryo UI">
             <TabItem Header="AI関連" Name="TabAI">
@@ -56,7 +59,7 @@ $xaml = @"
             </TabItem>
         </TabControl>
 
-        <TextBlock Grid.Row="2" Text="※表示されない場合はネット接続を確認してください"
+        <TextBlock Grid.Row="2" Name="StatusText" Text="※表示されない場合はネット接続を確認してください"
                    HorizontalAlignment="Center" Margin="5" Foreground="Gray" FontSize="10" FontFamily="Meiryo UI"/>
     </Grid>
 </Window>
@@ -66,9 +69,14 @@ $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::New($xaml))
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
 $btnRefresh = $window.FindName("BtnRefresh")
+$checkTopmost = $window.FindName("CheckTopmost")
 $panelAI = $window.FindName("PanelAI")
 $panelRE = $window.FindName("PanelRE")
 $panelEV = $window.FindName("PanelEV")
+$statusText = $window.FindName("StatusText")
+
+$checkTopmost.add_Checked({ $window.Topmost = $true })
+$checkTopmost.add_Unchecked({ $window.Topmost = $false })
 
 # ユーティリティ: UrlEncode用の型
 if (-not ("Main.Web" -as [type])) {
@@ -90,45 +98,71 @@ function Get-News {
     $encoded = [Main.Web]::UrlEncode($query)
     $url = "https://news.google.com/rss/search?q=$encoded&hl=ja&gl=JP&ceid=JP:ja"
 
-    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-    # プロキシで現在のユーザーの認証情報を使用する
-    $session.ProxyUseDefaultCredentials = $true
-
-    $cookie = New-Object System.Net.Cookie("CONSENT", "YES+", "/", ".google.com")
-    $session.Cookies.Add($cookie)
-
     $headers = @{
         "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         "Accept-Language" = "ja,en-US;q=0.9,en;q=0.8"
         "Referer" = "https://news.google.com/"
     }
 
-    try {
-        $global:LastPsError = $null
-        $response = Invoke-WebRequest -Uri $url -WebSession $session -Headers $headers -TimeoutSec 15 -UseBasicParsing
+    $content = $null
+    $lastError = ""
+    $isConsentBlocked = $false
 
+    # 方法1: Invoke-WebRequest
+    try {
+        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        $session.ProxyUseDefaultCredentials = $true
+        $cookie = New-Object System.Net.Cookie("CONSENT", "YES+", "/", ".google.com")
+        $session.Cookies.Add($cookie)
+
+        $response = Invoke-WebRequest -Uri $url -WebSession $session -Headers $headers -TimeoutSec 10 -UseBasicParsing
         $content = $response.Content
         if ($content -like "*<html*") {
-            if ($response.BaseResponse.ResponseUri -like "*consent.google.com*") {
-                $global:LastPsError = "Googleの同意画面にブロックされました。クッキー設定を確認してください。"
-            } else {
-                $global:LastPsError = "社内フィルタ等によりRSS取得がブロックされました。"
-            }
-            return @()
+            if ($response.BaseResponse.ResponseUri -like "*consent.google.com*") { $isConsentBlocked = $true }
+            $content = $null # HTMLが返ってきたら失敗扱い
         }
+    } catch {
+        $lastError = "IWR Error: " + $_.Exception.Message
+    }
 
+    # 方法2: WebClient (方法1が失敗した場合のフォールバック)
+    if ($null -eq $content) {
+        try {
+            $wc = New-Object System.Net.WebClient
+            $wc.Encoding = [System.Text.Encoding]::UTF8
+            $wc.Headers.Add("User-Agent", $headers["User-Agent"])
+            $wc.Headers.Add("Cookie", "CONSENT=YES+")
+            $wc.Proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+            $wc.Proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
+
+            $content = $wc.DownloadString($url)
+            if ($content -like "*<html*") { $content = $null }
+        } catch {
+            $lastError += " | WC Error: " + $_.Exception.Message
+        }
+    }
+
+    if ($null -eq $content) {
+        if ($isConsentBlocked) {
+            $global:LastPsError = "Googleの同意画面(consent.google.com)に転送されました。"
+        } else {
+            $global:LastPsError = "ニュース取得に失敗しました。社内フィルタでブロックされている可能性があります。($lastError)"
+        }
+        return @()
+    }
+
+    try {
         [xml]$xml = $content
         $items = $xml.rss.channel.item
         if ($null -eq $items) {
-            $snippet = $content.Substring(0, [Math]::Min(50, $content.Length)).Replace("`n", " ")
-            $global:LastPsError = "記事が見つかりません。 (内容: $snippet...)"
+            $snippet = $content.Substring(0, [Math]::Min(100, $content.Length)).Replace("`n", " ")
+            $global:LastPsError = "RSS解析結果が空です。 (内容: $snippet)"
             return @()
         }
 
         $all = @()
         foreach ($item in $items) {
             $pubDate = [datetime]$item.pubDate
-            # sourceがオブジェクトか文字列か判定してテキストを取得
             $sourceText = if ($item.source -is [System.Management.Automation.PSCustomObject]) { $item.source."#text" } else { $item.source }
             if ($null -eq $sourceText) { $sourceText = "不明" }
 
@@ -148,9 +182,10 @@ function Get-News {
         $priority = $nikkei | Select-Object -First 3
         $rest = ($nikkei | Select-Object -Skip 3) + $others | Sort-Object Date -Descending
 
+        $global:LastPsError = $null
         return ($priority + $rest) | Select-Object -First 20
     } catch {
-        $global:LastPsError = $_.Exception.Message
+        $global:LastPsError = "XML解析エラー: " + $_.Exception.Message
         return @()
     }
 }
@@ -160,12 +195,13 @@ function Render-Category {
     $panel.Children.Clear()
     if ($null -eq $items -or $items.Count -eq 0) {
         $err = New-Object System.Windows.Controls.TextBlock
-        $msg = "記事を取得できませんでした"
-        if ($global:LastPsError) { $msg += "`n`n詳細: " + $global:LastPsError }
+        $msg = "記事が見つかりませんでした"
+        if ($global:LastPsError) { $msg += "`n`n(詳細: " + $global:LastPsError + ")" }
         $err.Text = $msg
-        $err.Margin = "50"
+        $err.Margin = "20"
         $err.TextAlignment = "Center"
         $err.HorizontalAlignment = "Center"
+        $err.TextWrapping = "Wrap"
         $panel.Children.Add($err)
         return
     }
@@ -183,13 +219,14 @@ function Render-Category {
 
         if ($item.IsNikkei) {
             $badge = New-Object System.Windows.Controls.TextBlock
-            $badge.Text = "日経新聞"
+            $badge.Text = "日経優先"
             $badge.Background = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#003399")
             $badge.Foreground = [System.Windows.Media.Brushes]::White
             $badge.FontSize = 10
             $badge.Padding = "4,1"
             $badge.HorizontalAlignment = "Left"
             $badge.Margin = "0,0,0,5"
+            $badge.FontWeight = "Bold"
             $stack.Children.Add($badge)
         }
 
@@ -202,11 +239,10 @@ function Render-Category {
         if ($item.IsNikkei) { $title.Foreground = [System.Windows.Media.Brushes]::Black }
         else { $title.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFrom("#0000EE") }
 
-        # クロージャを使用して変数を固定する
         $currentLink = $item.Link
         $title.add_MouseDown({
             param($s, $e)
-            Start-Process $currentLink
+            try { Start-Process $currentLink } catch { [System.Windows.MessageBox]::Show("ブラウザを開けませんでした: " + $currentLink) }
         }.GetNewClosure())
 
         $title.add_MouseEnter({ $title.TextDecorations = [System.Windows.TextDecorations]::Underline })
@@ -228,6 +264,7 @@ function Render-Category {
 
 function Update-UI {
     $btnRefresh.IsEnabled = $false
+    $statusText.Text = "ニュースを取得しています..."
     $panelAI.Children.Clear()
     $panelRE.Children.Clear()
     $panelEV.Children.Clear()
@@ -241,21 +278,21 @@ function Update-UI {
         $_.Children.Add($loading)
     }
 
-    # UIを更新するためにDoEventsを呼び出す
     [System.Windows.Forms.Application]::DoEvents()
 
-    # ニュース取得 (順次実行)
-    $resAI = Get-News "人工知能 OR 生成AI OR AI"
+    # ニュース取得
+    $resAI = Get-News "人工知能 OR 生成AI"
     Render-Category $panelAI $resAI
     [System.Windows.Forms.Application]::DoEvents()
 
-    $resRE = Get-News "再生可能エネルギー OR 再エネ OR 太陽光 OR 風力"
+    $resRE = Get-News "再生可能エネルギー OR 再エネ"
     Render-Category $panelRE $resRE
     [System.Windows.Forms.Application]::DoEvents()
 
-    $resEV = Get-News "電気自動車 OR EV OR テスラ OR 自動運転"
+    $resEV = Get-News "電気自動車 OR EV"
     Render-Category $panelEV $resEV
 
+    $statusText.Text = "最終更新: " + (Get-Date -Format "HH:mm:ss")
     $btnRefresh.IsEnabled = $true
 }
 
