@@ -88,7 +88,8 @@ if (-not ("Main.Web" -as [type])) {
 function Get-News {
     param($query)
     $encoded = [Main.Web]::UrlEncode($query)
-    $url = "https://news.google.com/rss/search?q=$encoded&hl=ja&gl=JP&ceid=JP:ja"
+    # ブラウザでの直接検索に近い形式のURL
+    $url = "https://news.google.com/search?q=$encoded&hl=ja&gl=JP&ceid=JP:ja&output=rss"
 
     $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     # プロキシで現在のユーザーの認証情報を使用する
@@ -104,10 +105,22 @@ function Get-News {
     }
 
     try {
-        $xml = Invoke-RestMethod -Uri $url -WebSession $session -Headers $headers -TimeoutSec 15
         $global:LastPsError = $null
+        $response = Invoke-WebRequest -Uri $url -WebSession $session -Headers $headers -TimeoutSec 15 -UseBasicParsing
+
+        $content = $response.Content
+        if ($content -like "*<html*" -or $content -like "*<!doctype html*") {
+            $global:LastPsError = "社内のURLフィルタリングによりRSSが遮断されました。"
+            return @()
+        }
+
+        [xml]$xml = $content
         $items = $xml.rss.channel.item
-        if ($null -eq $items) { return @() }
+        if ($null -eq $items) {
+            $snippet = $content.Substring(0, [Math]::Min(100, $content.Length)).Replace("`n", " ")
+            $global:LastPsError = "記事データが見つかりません。(冒頭: $snippet...)"
+            return @()
+        }
 
         $all = @()
         foreach ($item in $items) {

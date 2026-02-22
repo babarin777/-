@@ -108,7 +108,8 @@ class RobustNewsGadget:
 
     def fetch_news(self, query):
         """GoogleニュースRSSから取得（SSL/プロキシ対策込み）"""
-        url = f"https://news.google.com/rss/search?q={quote_plus(query)}&hl=ja&gl=JP&ceid=JP:ja"
+        # PCから直接読み込むのに近い形式のURL（output=rssパラメータを使用）
+        url = f"https://news.google.com/search?q={quote_plus(query)}&hl=ja&gl=JP&ceid=JP:ja&output=rss"
         try:
             # プロキシ設定のデバッグ情報をコンソールに出力
             if not hasattr(self, '_proxy_logged'):
@@ -119,17 +120,28 @@ class RobustNewsGadget:
                 # まずは標準の接続を試行
                 r = self.session.get(url, timeout=15)
             except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
-                self._last_error = str(e)
+                self._last_error = f"接続エラー: {e}"
                 print(f"DEBUG: Initial fetch failed for {query}, retrying with verify=False. Error: {e}")
                 # 失敗した場合はSSL検証をスキップして再試行
                 r = self.session.get(url, timeout=15, verify=False)
 
             if r.status_code != 200:
-                self._last_error = f"HTTP {r.status_code}"
+                self._last_error = f"HTTPエラー {r.status_code}"
                 print(f"DEBUG: Fetch Error {r.status_code} for {query}")
                 return []
 
+            # 取得した内容がHTML（ブロック画面）でないかチェック
+            content_snippet = r.text[:200].lower()
+            if "<html" in content_snippet or "<!doctype html" in content_snippet:
+                self._last_error = "社内のURLフィルタリングにより、RSSではなくブロック画面が返されました。"
+                return []
+
             feed = feedparser.parse(r.content)
+
+            if not feed.entries:
+                snippet = r.text[:100].replace('\n', ' ')
+                self._last_error = f"受信したデータに記事が含まれていません。(冒頭: {snippet}...)"
+                return []
 
             # --- ソートロジック ---
             # 1. 全記事を日付順に並める
