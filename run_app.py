@@ -3,75 +3,94 @@ import sys
 import os
 import time
 import socket
+import importlib.util
 
 def is_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('localhost', port)) == 0
 
+def check_package(package_name):
+    spec = importlib.util.find_spec(package_name)
+    return spec is not None
+
 def run():
     print("="*50)
-    print("Excel 解析アプリ 起動スクリプト")
+    print("   Excel 解析アプリ 診断・起動ツール")
     print("="*50)
 
-    # Check Python version
-    print(f"Python バージョン: {sys.version}")
+    print(f"[情報] Python 実行パス: {sys.executable}")
+    print(f"[情報] Python バージョン: {sys.version}")
+    print(f"[情報] 実行ディレクトリ: {os.getcwd()}")
 
-    # Check dependencies
-    print("\n依存ライブラリのチェック中...")
-    try:
-        import streamlit
-        import pandas
-        import plotly
-        import openai
-        import openpyxl
-        print("✅ すべての必須ライブラリがインストールされています。")
-    except ImportError as e:
-        print(f"❌ ライブラリが不足しています: {e}")
-        print("インストールを開始します...")
+    # Required packages
+    packages = ["streamlit", "pandas", "plotly", "openai", "openpyxl", "pyarrow"]
+    missing_packages = []
+
+    print("\n[1] 依存ライブラリの確認中...")
+    for pkg in packages:
+        if check_package(pkg):
+            print(f"  ✅ {pkg.ljust(12)}: インストール済み")
+        else:
+            print(f"  ❌ {pkg.ljust(12)}: 未インストール")
+            missing_packages.append(pkg)
+
+    if missing_packages:
+        print(f"\n[アクション] {len(missing_packages)} 個のライブラリが不足しています。インストールを開始します...")
         try:
+            # Try to upgrade pip first
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
             subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-            print("✅ インストールが完了しました。")
+            print("  ✅ ライブラリのインストールが完了しました。")
         except Exception as e:
-            print(f"❌ インストールの実行中にエラーが発生しました: {e}")
-            print("手動で 'pip install -r requirements.txt' を実行してください。")
+            print(f"  ❌ インストール中にエラーが発生しました: {e}")
+            print("  [ヒント] 管理者権限で実行するか、'pip install -r requirements.txt' を手動で試してください。")
             input("\nエンターキーを押して終了...")
             return
 
-    # Check port 8501
+    print("\n[2] 起動準備...")
+    # Port check
     port = 8501
     if is_port_in_use(port):
-        print(f"\n⚠️ 警告: ポート {port} は既に使用されています。")
-        print("別のポートで起動を試みます、または既存のプロセスを終了してください。")
+        print(f"  ⚠️  ポート {port} は既に使用されています。Streamlit は自動的に別のポートを使用します。")
+    else:
+        print(f"  ✅ ポート {port} は使用可能です。")
 
-    # Run streamlit
-    print("\nStreamlit を起動しています...")
-    # Use 'python -m streamlit' by default for better compatibility
+    # Final check for app file
+    if not os.path.exists("excel_analyzer_app.py"):
+        print("  ❌ エラー: 'excel_analyzer_app.py' が見つかりません。")
+        input("\nエンターキーを押して終了...")
+        return
+
+    print("\n[3] Streamlit アプリケーションを起動します...")
+    print("    (ブラウザが自動的に開かない場合は、コンソールに表示される URL をクリックしてください)\n")
+
+    # Use 'python -m streamlit' as it's the most reliable way
     cmd = [sys.executable, "-m", "streamlit", "run", "excel_analyzer_app.py"]
 
     try:
         env = os.environ.copy()
+        # Add current directory to PYTHONPATH to ensure local imports work if any
         env["PYTHONPATH"] = os.getcwd() + os.pathsep + env.get("PYTHONPATH", "")
 
-        # Start the process
+        # In some environments, Streamlit needs specific flags
+        # env["STREAMLIT_SERVER_PORT"] = "8501"
+
         process = subprocess.Popen(cmd, env=env)
 
-        # Wait a bit to see if it crashes immediately
-        time.sleep(3)
-        if process.poll() is not None:
-            # It exited
-            print(f"\n❌ Streamlit が起動直後に終了しました (終了コード: {process.returncode})")
-            print("依存ライブラリが正しくインストールされているか、ポート 8501 が空いているか確認してください。")
-            input("\nエンターキーを押して終了...")
-        else:
-            # Still running, wait for it
-            process.wait()
+        # Monitor the process for the first 5 seconds
+        for i in range(5):
+            time.sleep(1)
+            if process.poll() is not None:
+                print(f"\n❌ エラー: アプリが予期せず終了しました (コード: {process.returncode})")
+                print("  [ヒント] 上記の Streamlit ログを確認してください。")
+                input("\nエンターキーを押して終了...")
+                return
+
+        print("\n✅ 起動に成功したようです。アプリを終了するにはこのウィンドウを閉じるか、Ctrl+C を押してください。")
+        process.wait()
 
     except KeyboardInterrupt:
-        print("\nアプリを終了しました。")
-    except subprocess.CalledProcessError as e:
-        print(f"\n❌ Streamlit が異常終了しました (終了コード: {e.returncode})")
-        print("エラー内容を確認してください。")
-        input("\nエンターキーを押して終了...")
+        print("\n[情報] ユーザーによって中断されました。")
     except Exception as e:
         print(f"\n❌ 予期しないエラーが発生しました: {e}")
         import traceback

@@ -5,8 +5,13 @@ import openai
 import io
 import sys
 
-# Set page config
-st.set_page_config(page_title="Excel Analysis App", layout="wide")
+# Set page config - must be the first streamlit command
+try:
+    st.set_page_config(page_title="Excel Analysis App", layout="wide")
+except Exception as e:
+    # If this fails, something is fundamentally wrong with streamlit
+    print(f"Critical Streamlit Error: {e}")
+    sys.exit(1)
 
 def sanitize_dataframe(df):
     """
@@ -46,8 +51,14 @@ OpenAIのAPIキーを設定すると、自然言語での高度な解析が可�
 # Sidebar for configuration
 st.sidebar.header("設定")
 api_key = st.sidebar.text_input("OpenAI API Key", type="password")
+
+# Initialize OpenAI client if API key is provided
+client = None
 if api_key:
-    openai.api_key = api_key
+    try:
+        client = openai.OpenAI(api_key=api_key)
+    except Exception as e:
+        st.sidebar.error(f"OpenAIクライアントの初期化に失敗しました: {e}")
 
 # File uploader
 uploaded_file = st.sidebar.file_uploader("Excelファイルをアップロード", type=["xlsx", "xls"])
@@ -55,12 +66,15 @@ uploaded_file = st.sidebar.file_uploader("Excelファイルをアップロード
 if uploaded_file:
     # Load Excel to get sheet names
     try:
-        xl = pd.ExcelFile(uploaded_file)
+        # Reset file pointer just in case
+        uploaded_file.seek(0)
+
+        xl = pd.ExcelFile(uploaded_file, engine='openpyxl')
         sheet_names = xl.sheet_names
         selected_sheet = st.sidebar.selectbox("解析するシートを選択", sheet_names)
 
-        # Load selected sheet
-        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+        # Load selected sheet - Use the xl object to avoid pointer issues
+        df = xl.parse(selected_sheet)
 
         st.subheader(f"シート: {selected_sheet} のデータプレビュー")
         try:
@@ -127,7 +141,6 @@ if uploaded_file:
                         """
 
                         # Use new OpenAI API (v1+)
-                        client = openai.OpenAI(api_key=api_key)
                         response = client.chat.completions.create(
                             model="gpt-4o", # Or gpt-3.5-turbo
                             messages=[
