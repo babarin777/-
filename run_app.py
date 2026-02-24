@@ -29,16 +29,26 @@ def is_port_in_use(port):
 def main():
     print("--- Excelデータ解析アプリ 起動ツール ---")
 
-    # スクリプトの場所をカレントディレクトリに設定
+    # スクリプトの場所を作業ディレクトリに設定
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    try:
-        os.chdir(script_dir)
-    except Exception as e:
-        print(f"警告: 作業ディレクトリの変更に失敗しました: {e}")
+    if script_dir:
+        try:
+            os.chdir(script_dir)
+        except Exception as e:
+            print(f"警告: 作業ディレクトリの変更に失敗しました: {e}")
 
     # 診断情報の表示
+    print(f"Pythonバージョン: {sys.version}")
     print(f"Pythonパス: {sys.executable}")
     print(f"実行ディレクトリ: {os.getcwd()}")
+
+    # ファイルの存在確認
+    app_file = "excel_analyzer_app.py"
+    if not os.path.exists(app_file):
+        print(f"エラー: {app_file} が見つかりません。")
+        print(f"現在のディレクトリにあるファイル: {os.listdir('.')}")
+        input("\n[Enter] キーを押して終了します...")
+        sys.exit(1)
 
     if os.getcwd().lower().endswith("system32"):
         print("\n[!] 警告: システムディレクトリ(system32)で実行されています。")
@@ -61,8 +71,9 @@ def main():
     log_file = "startup_debug.log"
 
     # Streamlitを起動
+    # server.addressを 127.0.0.1 に固定して互換性を高める
     cmd = [sys.executable, "-m", "streamlit", "run", "excel_analyzer_app.py",
-           "--server.port", str(port), "--server.address", "localhost"]
+           "--server.port", str(port), "--server.address", "127.0.0.1"]
 
     try:
         f = None
@@ -80,8 +91,10 @@ def main():
             print(f"{10-i}...", end=" ", flush=True)
         print("\n")
 
-        url = f"http://localhost:{port}"
-        print(f"ブラウザで {url} を開きます。")
+        url = f"http://127.0.0.1:{port}"
+        print(f"ブラウザで {url} を開きます...")
+        # サーバーが立ち上がる前にブラウザが開いて「接続拒否」になるのを防ぐため、少し待つ
+        time.sleep(2)
         webbrowser.open(url)
 
         print("\n--- 起動チェック ---")
