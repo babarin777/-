@@ -8,6 +8,21 @@ import sys
 # Set page config
 st.set_page_config(page_title="Excel Analysis App", layout="wide")
 
+def sanitize_dataframe(df):
+    """
+    Streamlitのst.dataframeでArrowエラーが出るのを防ぐため、
+    object型のカラムを文字列に変換するなどの処理を行います。
+    """
+    df_clean = df.copy()
+    for col in df_clean.columns:
+        if df_clean[col].dtype == 'object':
+            try:
+                # 可能な場合は文字列に変換（Noneなどは空文字列やNaNとして保持される）
+                df_clean[col] = df_clean[col].astype(str).replace('nan', '')
+            except:
+                pass
+    return df_clean
+
 st.title("📊 Excel 解析アプリ")
 st.markdown("""
 このアプリでは、Excelファイルをアップロードして、自由な内容で解析を行うことができます。
@@ -34,7 +49,11 @@ if uploaded_file:
         df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
 
         st.subheader(f"シート: {selected_sheet} のデータプレビュー")
-        st.dataframe(df.head(10))
+        try:
+            st.dataframe(sanitize_dataframe(df.head(10)))
+        except Exception as e:
+            st.warning("データの表示中にエラーが発生しました。代替方式で表示します。")
+            st.table(df.head(10))
 
         # Basic Info
         with st.expander("データの基本情報"):
@@ -124,7 +143,10 @@ if uploaded_file:
 
                         if 'result_df' in local_vars:
                             st.write("**解析データ表:**")
-                            st.dataframe(local_vars['result_df'])
+                            try:
+                                st.dataframe(sanitize_dataframe(local_vars['result_df']))
+                            except Exception:
+                                st.table(local_vars['result_df'])
 
                         if 'fig' in local_vars:
                             st.write("**可視化結果:**")

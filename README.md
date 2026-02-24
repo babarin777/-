@@ -18,6 +18,14 @@ pip install -r requirements.txt
 
 ### 2. アプリケーションの起動
 
+以下のコマンドを実行することで、依存ライブラリのチェックとアプリの起動を自動で行います。
+
+```bash
+python run_app.py
+```
+
+または、直接 Streamlit を使用して起動することもできます。
+
 ```bash
 streamlit run excel_analyzer_app.py
 ```
