@@ -1,3 +1,11 @@
+# ==============================================================================
+# 【重要】このファイルを直接ダブルクリックしても起動しません。
+# 起動するには、以下のいずれかの方法を行ってください：
+# 1. 同じフォルダにある 「run_app.bat」 をダブルクリックする（推奨）
+# 2. コマンドプロンプトで 「python run_app.py」 を実行する
+# 3. コマンドプロンプトで 「streamlit run excel_analyzer_app.py」 を実行する
+# ==============================================================================
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -71,7 +79,7 @@ if uploaded_file:
         # Reset file pointer just in case
         uploaded_file.seek(0)
 
-        xl = pd.ExcelFile(uploaded_file, engine='openpyxl')
+        xl = pd.ExcelFile(uploaded_file)
         sheet_names = xl.sheet_names
         selected_sheet = st.sidebar.selectbox("解析するシートを選択", sheet_names)
 

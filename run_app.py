@@ -113,25 +113,27 @@ def run():
         url = f"http://localhost:{port}"
         logger.info(f"🌍 ブラウザで以下を開いてください: {url}")
 
-        def open_browser():
+        def open_browser_after_delay():
             time.sleep(3)
             logger.info("🚀 ブラウザを自動的に開きます...")
             webbrowser.open(url)
 
-        # We can't easily thread here without complex setup, so we just log and wait
+        import threading
+        threading.Thread(target=open_browser_after_delay, daemon=True).start()
 
         # Monitor output and print to console
         logger.info("--- アプリのログ出力を開始します ---")
 
         # Read output in a loop
-        for line in iter(process.stdout.readline, ""):
-            if line:
-                # Log without the default logger formatting for cleaner app output
-                sys.stdout.write(f"[App] {line}")
-                sys.stdout.flush()
-                # Also save to debug log
-                with open("startup_debug.log", "a", encoding='utf-8') as f:
-                    f.write(f"[App] {line}")
+        with open("startup_debug.log", "a", encoding='utf-8') as log_file:
+            for line in iter(process.stdout.readline, ""):
+                if line:
+                    # Log without the default logger formatting for cleaner app output
+                    sys.stdout.write(f"[App] {line}")
+                    sys.stdout.flush()
+                    # Also save to debug log
+                    log_file.write(f"[App] {line}")
+                    log_file.flush()
 
             if process.poll() is not None:
                 break
