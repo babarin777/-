@@ -48,18 +48,21 @@ def main():
         input("\n[Enter] キーを押して終了します...")
         sys.exit(1)
 
+    # 空いているポートを探す
     port = 8501
-    if is_port_in_use(port):
-        print(f"警告: ポート {port} は既に使用されています。別のポートで起動を試みます...")
-        # Streamlitは自動的に次のポートを探しますが、明示的に警告します。
+    while is_port_in_use(port):
+        print(f"ポート {port} は既に使用されています。次のポートを試します...")
+        port += 1
 
+    print(f"使用ポート: {port}")
     print("アプリケーションを起動しています...")
 
     # ログファイルの設定
     log_file = "startup_debug.log"
 
     # Streamlitを起動
-    cmd = [sys.executable, "-m", "streamlit", "run", "excel_analyzer_app.py", "--server.port", str(port)]
+    cmd = [sys.executable, "-m", "streamlit", "run", "excel_analyzer_app.py",
+           "--server.port", str(port), "--server.address", "localhost"]
 
     try:
         f = None
@@ -67,7 +70,7 @@ def main():
             f = open(log_file, "w", encoding="utf-8")
             process = subprocess.Popen(cmd, stdout=f, stderr=f)
         except PermissionError:
-            print(f"\n警告: '{log_file}' への書き込み権限がありません。ログ出力をスキップします。")
+            print(f"\n警告: '{log_file}' への書き込み権限がありません。ログ出力をターミナルに表示します。")
             process = subprocess.Popen(cmd)
 
         # サーバーの起動待ち
@@ -84,7 +87,13 @@ def main():
         print("\n--- 起動チェック ---")
         if process.poll() is not None:
             print("エラー: アプリが予期せず終了しました。")
-            print(f"詳細なエラー内容は '{log_file}' を確認してください。")
+            if f:
+                print("--- エラーログの内容 ---")
+                with open(log_file, "r", encoding="utf-8") as read_f:
+                    print(read_f.read())
+                print("------------------------")
+            else:
+                print("ログファイルを作成できなかったため、詳細は上記のエラーを確認してください。")
         else:
             print("アプリケーションがバックグラウンドで動作しています。")
             print("アクセスできない場合は、ブラウザで以下のURLを試してください:")
