@@ -60,6 +60,11 @@ def main():
     if not os.path.exists(app_file):
         print(f"エラー: {app_file} が見つかりません。")
         print(f"現在のディレクトリにあるファイル: {os.listdir('.')}")
+
+        if ".zip" in os.getcwd().lower() or "temp" in os.getcwd().lower():
+            print("\n[!] ヒント: ZIPファイルを展開（解凍）せずに実行している可能性があります。")
+            print("ZIPファイルを右クリックして「すべて展開」を選び、展開後のフォルダから実行してください。")
+
         input("\n[Enter] キーを押して終了します...")
         sys.exit(1)
 

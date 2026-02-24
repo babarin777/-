@@ -34,6 +34,10 @@ echo.
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] Application failed to start.
+    echo.
+    echo [TIP] ZIPファイルを展開(解凍)せずに実行していませんか？
+    echo       右クリックから「すべて展開」を選択した後に実行してください。
+    echo.
     echo 詳細は README.txt を確認してください。
     pause
 )
