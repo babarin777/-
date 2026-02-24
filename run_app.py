@@ -27,6 +27,15 @@ def run():
     missing_packages = []
 
     print("\n[1] 依存ライブラリの確認中...")
+
+    # Check if pip is available
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        print("  ❌ エラー: 'pip' が見つかりません。Pythonのインストール時に 'pip' を含めるようにしてください。")
+        input("\nエンターキーを押して終了...")
+        return
+
     for pkg in packages:
         if check_package(pkg):
             print(f"  ✅ {pkg.ljust(12)}: インストール済み")
@@ -43,7 +52,8 @@ def run():
             print("  ✅ ライブラリのインストールが完了しました。")
         except Exception as e:
             print(f"  ❌ インストール中にエラーが発生しました: {e}")
-            print("  [ヒント] 管理者権限で実行するか、'pip install -r requirements.txt' を手動で試してください。")
+            print("  [ヒント] インターネット接続を確認するか、管理者権限で実行してください。")
+            print("  または 'pip install -r requirements.txt' を手動で実行してください。")
             input("\nエンターキーを押して終了...")
             return
 
