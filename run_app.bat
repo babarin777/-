@@ -1,6 +1,6 @@
 @echo off
-echo ニュースガジェットを起動しています...
-python news_gadget.py
+echo ニュースピックアップを起動しています...
+python google_launcher.py
 if %errorlevel% neq 0 (
     echo.
     echo エラーが発生しました。
