@@ -29,9 +29,20 @@ def is_port_in_use(port):
 def main():
     print("--- Excelデータ解析アプリ 起動ツール ---")
 
+    # スクリプトの場所をカレントディレクトリに設定
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    try:
+        os.chdir(script_dir)
+    except Exception as e:
+        print(f"警告: 作業ディレクトリの変更に失敗しました: {e}")
+
     # 診断情報の表示
     print(f"Pythonパス: {sys.executable}")
-    print(f"カレントディレクトリ: {os.getcwd()}")
+    print(f"実行ディレクトリ: {os.getcwd()}")
+
+    if os.getcwd().lower().endswith("system32"):
+        print("\n[!] 警告: システムディレクトリ(system32)で実行されています。")
+        print("アプリのファイルがあるフォルダに移動(cd)してから実行することをお勧めします。")
 
     if not check_dependencies():
         input("\n[Enter] キーを押して終了します...")
@@ -48,12 +59,16 @@ def main():
     log_file = "startup_debug.log"
 
     # Streamlitを起動
-    # コマンド: python -m streamlit run excel_analyzer_app.py
     cmd = [sys.executable, "-m", "streamlit", "run", "excel_analyzer_app.py", "--server.port", str(port)]
 
     try:
-        with open(log_file, "w", encoding="utf-8") as f:
+        f = None
+        try:
+            f = open(log_file, "w", encoding="utf-8")
             process = subprocess.Popen(cmd, stdout=f, stderr=f)
+        except PermissionError:
+            print(f"\n警告: '{log_file}' への書き込み権限がありません。ログ出力をスキップします。")
+            process = subprocess.Popen(cmd)
 
         # サーバーの起動待ち
         print("サーバーの起動を待機中 (約10秒)...")
@@ -86,6 +101,9 @@ def main():
     except Exception as e:
         print(f"致命的なエラーが発生しました: {e}")
         input("\n[Enter] キーを押して終了します...")
+    finally:
+        if f:
+            f.close()
 
 if __name__ == "__main__":
     main()
