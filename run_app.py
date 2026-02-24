@@ -24,7 +24,20 @@ def check_dependencies():
 
 def is_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(('localhost', port)) == 0
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+def get_local_ip():
+    """マシンのローカルIPアドレスを取得する"""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # 実際に通信は行わない
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
 
 def main():
     print("--- Excelデータ解析アプリ 起動ツール ---")
@@ -71,9 +84,18 @@ def main():
     log_file = "startup_debug.log"
 
     # Streamlitを起動
-    # server.addressを 127.0.0.1 に固定して互換性を高める
-    cmd = [sys.executable, "-m", "streamlit", "run", "excel_analyzer_app.py",
-           "--server.port", str(port), "--server.address", "127.0.0.1"]
+    # 回避策:
+    # 1. server.addressを 0.0.0.0 にして全インターフェースで待ち受ける
+    # 2. CORS/XSRF保護を無効化して一部のプロキシ環境での制限を回避する
+    cmd = [
+        sys.executable, "-m", "streamlit", "run", "excel_analyzer_app.py",
+        "--server.port", str(port),
+        "--server.address", "0.0.0.0",
+        "--server.enableCORS", "false",
+        "--server.enableXsrfProtection", "false"
+    ]
+
+    local_ip = get_local_ip()
 
     try:
         f = None
@@ -91,11 +113,13 @@ def main():
             print(f"{10-i}...", end=" ", flush=True)
         print("\n")
 
-        url = f"http://127.0.0.1:{port}"
-        print(f"ブラウザで {url} を開きます...")
+        url_local = f"http://127.0.0.1:{port}"
+        url_network = f"http://{local_ip}:{port}"
+
+        print(f"ブラウザで {url_local} を開きます...")
         # サーバーが立ち上がる前にブラウザが開いて「接続拒否」になるのを防ぐため、少し待つ
-        time.sleep(2)
-        webbrowser.open(url)
+        time.sleep(3)
+        webbrowser.open(url_local)
 
         print("\n--- 起動チェック ---")
         if process.poll() is not None:
@@ -108,11 +132,15 @@ def main():
             else:
                 print("ログファイルを作成できなかったため、詳細は上記のエラーを確認してください。")
         else:
-            print("アプリケーションがバックグラウンドで動作しています。")
-            print("アクセスできない場合は、ブラウザで以下のURLを試してください:")
-            print(f"  1. http://localhost:{port}")
-            print(f"  2. http://127.0.0.1:{port}")
-            print(f"\nログファイル '{log_file}' が作成されました。問題がある場合はこの内容を確認してください。")
+            print("アプリケーションが正常に起動しました。")
+            print("\n[アクセスできない場合の回避策]")
+            print(f"ブラウザのアドレス欄に以下のURLをコピー＆ペーストして試してください：")
+            print(f"  1. {url_local}")
+            print(f"  2. http://localhost:{port}")
+            print(f"  3. {url_network} (ネットワーク経由)")
+            print("\n※ それでも拒否される場合、プロキシ設定やファイアウォールが原因の可能性があります。")
+            print(f"  詳細は 'README.txt' を確認してください。")
+            print(f"\nログファイル '{log_file}' が作成されました。")
 
         print("\n[Ctrl+C] を押すとアプリを終了します。")
         process.wait()

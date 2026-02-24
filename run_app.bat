@@ -25,10 +25,16 @@ if %errorlevel% equ 0 (
 )
 
 echo Using: %PY_CMD%
+echo.
+echo [INFO] ブラウザで「接続が拒否されました」と出る場合は、
+echo        表示される別のURL(127.0.0.1やIPアドレス)を試してください。
+echo.
+
 %PY_CMD% run_app.py
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] Application failed to start.
+    echo 詳細は README.txt を確認してください。
     pause
 )
 endlocal
