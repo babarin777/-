@@ -1,78 +1,80 @@
+import webbrowser
+import tkinter as tk
+from tkinter import messagebox
+import os
 import sys
-import time
-import traceback
-from playwright.sync_api import sync_playwright, Error as PlaywrightError
 
-def launch_chrome_and_google():
+def open_google():
     """
-    Playwrightを使用してChromeを自動的に起動し、Googleのホームページを表示します。
-    エラーハンドリングを強化し、問題発生時に詳細を表示します。
+    Googleのホームページをブラウザで開きます。
+    可能な限り Google Chrome を優先して使用します。
     """
-    print("--- Google Launcher 起動中 ---")
+    url = "https://www.google.com"
+    try:
+        # Windows環境でGoogle Chromeのインストールパスを直接探す
+        if sys.platform == "win32":
+            chrome_paths = [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
+            ]
+            for path in chrome_paths:
+                if os.path.exists(path):
+                    # Chromeを登録して使用する
+                    chrome_id = 'chrome'
+                    webbrowser.register(chrome_id, None, webbrowser.BackgroundBrowser(path))
+                    webbrowser.get(chrome_id).open(url)
+                    return True
 
-    with sync_playwright() as p:
-        browser = None
-        try:
-            print("ブラウザを起動しています...")
-            try:
-                # システムの Google Chrome を優先
-                browser = p.chromium.launch(headless=False, channel="chrome")
-                print("Google Chrome を起動しました。")
-            except Exception as e:
-                print(f"Google Chrome の起動に失敗しました: {e}")
-                print("同梱の Chromium で再試行します...")
-                browser = p.chromium.launch(headless=False)
-                print("Chromium を起動しました。")
+        # Chromeが見つからない場合やWindows以外は、システムのデフォルトブラウザを使用
+        # これにより、追加のライブラリ（Playwright等）なしで確実に動作します
+        webbrowser.open(url)
+        return True
+    except Exception as e:
+        return str(e)
 
-            # コンテキストとページの作成
-            context = browser.new_context()
-            page = context.new_page()
+def main():
+    # 1. 起動時に自動でGoogleを開く
+    print("ブラウザを起動しています...")
+    result = open_google()
 
-            # タイムアウト設定（30秒）
-            page.set_default_timeout(30000)
+    # 2. 簡易的なGUIを表示（動作の確認と、失敗時の通知用）
+    # TkinterはPython標準ライブラリなので、追加インストール不要です
+    try:
+        root = tk.Tk()
+        root.title("Google起動アプリ")
+        root.geometry("350x180")
 
-            print("Googleのホームページ (https://www.google.com) へ移動しています...")
-            response = page.goto("https://www.google.com")
+        # ウィンドウを画面中央付近に表示
+        root.eval('tk::PlaceWindow . center')
 
-            if response:
-                print(f"ステータスコード: {response.status}")
-                if response.ok:
-                    print("正常にページが表示されました。")
-                else:
-                    print(f"警告: ページは読み込まれましたが、ステータスが OK ではありません。")
-            else:
-                print("エラー: レスポンスを受信できませんでした。")
+        msg = "ブラウザでGoogleを開きました。" if result is True else f"エラーが発生しました:\n{result}"
+        color = "black" if result is True else "red"
 
-            print("\n完了しました。Googleのホームページを表示中です。")
-            print("※ ブラウザを閉じるか、この画面で Ctrl+C を押すと終了します。")
+        label = tk.Label(root, text=msg, fg=color, pady=20, wraplength=300)
+        label.pack()
 
-            # ブラウザが閉じられた時の処理
-            browser.on("disconnected", lambda _: sys.exit())
+        # ボタンエリア
+        frame = tk.Frame(root)
+        frame.pack(pady=10)
 
-            # ユーザーが終了するまで待機
-            while True:
-                time.sleep(1)
+        btn_retry = tk.Button(frame, text="もう一度Googleを開く", command=open_google, width=20)
+        btn_retry.pack(pady=5)
 
-        except PlaywrightError as e:
-            print("\n[Playwrightエラーが発生しました]")
-            print(f"内容: {e}")
-            # GUIがない環境（サーバー等）で実行しようとした場合などのエラーコード的な役割
-            if "Target page, context or browser has been closed" in str(e):
-                print("ブラウザが予期せず閉じられました。")
-        except Exception as e:
-            print("\n[予期しないエラーが発生しました]")
-            print(f"エラー種別: {type(e).__name__}")
-            print(f"エラー内容: {e}")
-            print("\n詳細なスタックトレース:")
-            traceback.print_exc()
-        finally:
-            if browser:
-                try:
-                    browser.close()
-                except:
-                    pass
-            print("\nプログラムを終了します。Enterキーを押すとこの画面を閉じます。")
-            input() # エラーメッセージを確認できるように一時停止
+        btn_exit = tk.Button(frame, text="閉じる", command=root.destroy, width=20)
+        btn_exit.pack(pady=5)
+
+        # 常に最前面に表示
+        root.attributes("-topmost", True)
+
+        print("アプリが起動しました。")
+        root.mainloop()
+
+    except Exception as e:
+        # 万が一GUIが起動できない環境（LinuxのCUI環境など）の場合
+        print(f"GUIの起動に失敗しました。ブラウザ起動結果: {result}")
+        if result is not True:
+            print(f"エラー詳細: {result}")
 
 if __name__ == "__main__":
-    launch_chrome_and_google()
+    main()
