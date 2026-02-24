@@ -11,17 +11,31 @@ st.set_page_config(page_title="Excel Analysis App", layout="wide")
 def sanitize_dataframe(df):
     """
     Streamlitのst.dataframeでArrowエラーが出るのを防ぐため、
-    object型のカラムを文字列に変換するなどの処理を行います。
+    データのクリーニングと型変換を行います。
     """
-    df_clean = df.copy()
-    for col in df_clean.columns:
-        if df_clean[col].dtype == 'object':
-            try:
-                # 可能な場合は文字列に変換（Noneなどは空文字列やNaNとして保持される）
-                df_clean[col] = df_clean[col].astype(str).replace('nan', '')
-            except:
-                pass
-    return df_clean
+    try:
+        df_clean = df.copy()
+
+        # 1. 混合型や特殊なオブジェクト型を文字列に変換
+        for col in df_clean.columns:
+            # カラム全体の型を確認
+            if df_clean[col].dtype == 'object':
+                # 各要素が実際にどのような型かを確認し、必要に応じて変換
+                df_clean[col] = df_clean[col].apply(lambda x:
+                    str(x) if x is not None and not (isinstance(x, float) and pd.isna(x)) else x
+                )
+
+            # 2. カテゴリ型はArrowでエラーになりやすいため文字列にする
+            if str(df_clean[col].dtype) == 'category':
+                df_clean[col] = df_clean[col].astype(str)
+
+        # 3. インデックスのリセット（特殊なインデックスによるエラー回避）
+        # df_clean = df_clean.reset_index(drop=True)
+
+        return df_clean
+    except Exception as e:
+        st.error(f"データ変換中にエラーが発生しました: {e}")
+        return df
 
 st.title("📊 Excel 解析アプリ")
 st.markdown("""
