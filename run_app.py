@@ -4,107 +4,149 @@ import os
 import time
 import socket
 import importlib.util
+import webbrowser
+import logging
+
+# Setup logging to file and console
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler("startup_debug.log", encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def is_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('localhost', port)) == 0
 
 def check_package(package_name):
-    spec = importlib.util.find_spec(package_name)
-    return spec is not None
+    try:
+        spec = importlib.util.find_spec(package_name)
+        return spec is not None
+    except Exception:
+        return False
 
 def run():
-    print("="*50)
-    print("   Excel 解析アプリ 診断・起動ツール")
-    print("="*50)
+    logger.info("="*50)
+    logger.info("   Excel 解析アプリ 診断・起動ツール (高度なデバッグモード)")
+    logger.info("="*50)
 
-    print(f"[情報] Python 実行パス: {sys.executable}")
-    print(f"[情報] Python バージョン: {sys.version}")
-    print(f"[情報] 実行ディレクトリ: {os.getcwd()}")
+    logger.info(f"Python 実行パス: {sys.executable}")
+    logger.info(f"Python バージョン: {sys.version}")
+    logger.info(f"実行ディレクトリ: {os.getcwd()}")
+
+    # Check for required files
+    files = ["excel_analyzer_app.py", "requirements.txt"]
+    for f in files:
+        if os.path.exists(f):
+            logger.info(f"✅ ファイル確認: {f}")
+        else:
+            logger.error(f"❌ エラー: {f} が見つかりません。")
+            input("\nエンターキーを押して終了...")
+            return
 
     # Required packages
     packages = ["streamlit", "pandas", "plotly", "openai", "openpyxl", "pyarrow"]
     missing_packages = []
 
-    print("\n[1] 依存ライブラリの確認中...")
+    logger.info("\n[1] 依存ライブラリの確認中...")
 
     # Check if pip is available
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logger.info("✅ pip: 利用可能")
     except Exception:
-        print("  ❌ エラー: 'pip' が見つかりません。Pythonのインストール時に 'pip' を含めるようにしてください。")
+        logger.error("❌ エラー: 'pip' が見つかりません。")
         input("\nエンターキーを押して終了...")
         return
 
     for pkg in packages:
         if check_package(pkg):
-            print(f"  ✅ {pkg.ljust(12)}: インストール済み")
+            logger.info(f"  ✅ {pkg.ljust(12)}: インストール済み")
         else:
-            print(f"  ❌ {pkg.ljust(12)}: 未インストール")
+            logger.warning(f"  ⚠️  {pkg.ljust(12)}: 未インストール")
             missing_packages.append(pkg)
 
     if missing_packages:
-        print(f"\n[アクション] {len(missing_packages)} 個のライブラリが不足しています。インストールを開始します...")
+        logger.info(f"\n[アクション] {len(missing_packages)} 個のライブラリが不足しています。インストールを開始します...")
         try:
-            # Try to upgrade pip first
             subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
             subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-            print("  ✅ ライブラリのインストールが完了しました。")
+            logger.info("✅ ライブラリのインストールが完了しました。")
         except Exception as e:
-            print(f"  ❌ インストール中にエラーが発生しました: {e}")
-            print("  [ヒント] インターネット接続を確認するか、管理者権限で実行してください。")
-            print("  または 'pip install -r requirements.txt' を手動で実行してください。")
+            logger.error(f"❌ インストール中にエラーが発生しました: {e}")
+            logger.info("[ヒント] 管理者権限で実行するか、インターネット接続を確認してください。")
             input("\nエンターキーを押して終了...")
             return
 
-    print("\n[2] 起動準備...")
-    # Port check
+    logger.info("\n[2] 起動準備...")
     port = 8501
-    if is_port_in_use(port):
-        print(f"  ⚠️  ポート {port} は既に使用されています。Streamlit は自動的に別のポートを使用します。")
-    else:
-        print(f"  ✅ ポート {port} は使用可能です。")
+    while is_port_in_use(port):
+        logger.info(f"  ℹ️  ポート {port} は使用中です。次のポートを確認します...")
+        port += 1
+    logger.info(f"✅ ポート {port} を使用して起動を試みます。")
 
-    # Final check for app file
-    if not os.path.exists("excel_analyzer_app.py"):
-        print("  ❌ エラー: 'excel_analyzer_app.py' が見つかりません。")
-        input("\nエンターキーを押して終了...")
-        return
+    logger.info("\n[3] Streamlit アプリケーションを起動します...")
 
-    print("\n[3] Streamlit アプリケーションを起動します...")
-    print("    (ブラウザが自動的に開かない場合は、コンソールに表示される URL をクリックしてください)\n")
-
-    # Use 'python -m streamlit' as it's the most reliable way
-    cmd = [sys.executable, "-m", "streamlit", "run", "excel_analyzer_app.py"]
+    # Command to run streamlit
+    cmd = [sys.executable, "-m", "streamlit", "run", "excel_analyzer_app.py", "--server.port", str(port)]
 
     try:
         env = os.environ.copy()
-        # Add current directory to PYTHONPATH to ensure local imports work if any
         env["PYTHONPATH"] = os.getcwd() + os.pathsep + env.get("PYTHONPATH", "")
 
-        # In some environments, Streamlit needs specific flags
-        # env["STREAMLIT_SERVER_PORT"] = "8501"
+        # Start the process and capture output to log file as well
+        process = subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding='utf-8',
+            errors='replace'
+        )
 
-        process = subprocess.Popen(cmd, env=env)
+        # Open browser after a short delay
+        url = f"http://localhost:{port}"
+        logger.info(f"🌍 ブラウザで以下を開いてください: {url}")
 
-        # Monitor the process for the first 5 seconds
-        for i in range(5):
-            time.sleep(1)
+        def open_browser():
+            time.sleep(3)
+            logger.info("🚀 ブラウザを自動的に開きます...")
+            webbrowser.open(url)
+
+        # We can't easily thread here without complex setup, so we just log and wait
+
+        # Monitor output and print to console
+        logger.info("--- アプリのログ出力を開始します ---")
+
+        # Read output in a loop
+        for line in iter(process.stdout.readline, ""):
+            if line:
+                # Log without the default logger formatting for cleaner app output
+                sys.stdout.write(f"[App] {line}")
+                sys.stdout.flush()
+                # Also save to debug log
+                with open("startup_debug.log", "a", encoding='utf-8') as f:
+                    f.write(f"[App] {line}")
+
             if process.poll() is not None:
-                print(f"\n❌ エラー: アプリが予期せず終了しました (コード: {process.returncode})")
-                print("  [ヒント] 上記の Streamlit ログを確認してください。")
-                input("\nエンターキーを押して終了...")
-                return
+                break
 
-        print("\n✅ 起動に成功したようです。アプリを終了するにはこのウィンドウを閉じるか、Ctrl+C を押してください。")
-        process.wait()
+        rc = process.poll()
+        if rc != 0:
+            logger.error(f"\n❌ エラー: アプリが異常終了しました (コード: {rc})")
+            input("\nエンターキーを押して終了...")
 
     except KeyboardInterrupt:
-        print("\n[情報] ユーザーによって中断されました。")
+        logger.info("\n[情報] ユーザーによって中断されました。")
     except Exception as e:
-        print(f"\n❌ 予期しないエラーが発生しました: {e}")
+        logger.error(f"\n❌ 予期しないエラーが発生しました: {e}")
         import traceback
-        traceback.print_exc()
+        logger.error(traceback.format_exc())
         input("\nエンターキーを押して終了...")
 
 if __name__ == "__main__":

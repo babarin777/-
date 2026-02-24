@@ -5,6 +5,8 @@ import openai
 import io
 import sys
 
+print("--- excel_analyzer_app.py is loading... ---")
+
 # Set page config - must be the first streamlit command
 try:
     st.set_page_config(page_title="Excel Analysis App", layout="wide")
