@@ -34,6 +34,7 @@ streamlit run excel_qa_app.py
 
 1. **設定（サイドバー）**:
    - 左側のサイドバーにある「OpenAI API Key」欄に、取得したAPIキーを入力してください。
+   - **Tip**: `excel_qa_app.py` ファイルの冒頭にある `OPENAI_API_KEY = "*****"` の部分を書き換えて保存すると、毎回入力する手間を省けます。
    - 必要に応じてモデル（gpt-4o または gpt-4o-mini）を選択します。
 
 2. **Excelシートの入力**:

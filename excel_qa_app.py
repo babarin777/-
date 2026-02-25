@@ -2,6 +2,11 @@ import streamlit as st
 import pandas as pd
 from openai import OpenAI
 
+# ==========================================
+# 設定: OpenAI APIキーをここに記入できます
+# ==========================================
+OPENAI_API_KEY = "*****"
+
 # ページ設定
 st.set_page_config(page_title="Excel Q&A App", layout="wide")
 
@@ -11,9 +16,15 @@ st.write("Excelファイルをアップロードして、その内容につい�
 # サイドバーでAPIキーとモデルの設定
 with st.sidebar:
     st.header("設定")
-    api_key = st.text_input("OpenAI API Key", type="password", help="OpenAIのAPIキーを入力してください。")
+    # ファイル内にAPIキーが設定されている場合はそれを使用し、そうでなければ入力を求める
+    default_key = "" if OPENAI_API_KEY == "*****" else OPENAI_API_KEY
+    api_key = st.text_input("OpenAI API Key", value=default_key, type="password", help="OpenAIのAPIキーを入力してください。")
     model = st.selectbox("モデルを選択", ["gpt-4o", "gpt-4o-mini"], index=0)
-    st.info("※APIキーは保存されません。ブラウザを更新すると再入力が必要です。")
+
+    if OPENAI_API_KEY == "*****":
+        st.info("※ファイル内でAPIキーを直接設定することも可能です。")
+    else:
+        st.success("APIキーがファイルから読み込まれました。")
 
 # ①入力するシート（ファイルアップローダー）
 st.subheader("① Excelシートの入力")
