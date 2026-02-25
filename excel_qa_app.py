@@ -101,3 +101,12 @@ else:
 # フッター
 st.divider()
 st.caption("© 2024 Excel Q&A Assistant")
+
+# 直接実行された場合のランチャー
+if __name__ == "__main__":
+    import sys
+    from streamlit.web import cli as stcli
+
+    if not st.runtime.exists():
+        sys.argv = ["streamlit", "run", sys.argv[0]] + sys.argv[1:]
+        sys.exit(stcli.main())

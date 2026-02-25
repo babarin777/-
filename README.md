@@ -16,13 +16,19 @@ pip install streamlit pandas openpyxl openai
 
 ## アプリの起動方法
 
-ターミナルで以下のコマンドを実行します。
+ターミナルで以下のいずれかのコマンドを実行します。
 
+### A. Pythonコマンドで直接起動（推奨）
+```bash
+python excel_qa_app.py
+```
+
+### B. Streamlitコマンドで起動
 ```bash
 streamlit run excel_qa_app.py
 ```
 
-ブラウザが自動的に開き、アプリが表示されます。
+実行後、ブラウザが自動的に開き、アプリが表示されます。
 
 ## 操作方法
 
