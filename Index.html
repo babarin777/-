@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <base target="_top">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Noto Sans JP', sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #ECEFF1;
+      color: #37474F;
+    }
+    header {
+      background-color: #FFFFFF;
+      padding: 20px;
+      text-align: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    h1 {
+      margin: 0 0 15px 0;
+      font-size: 24px;
+      color: #37474F;
+    }
+    .input-group {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 15px;
+      flex-wrap: wrap;
+    }
+    input {
+      padding: 8px 12px;
+      border: 1px solid #CFD8DC;
+      border-radius: 4px;
+      font-size: 14px;
+      width: 150px;
+    }
+    button {
+      padding: 8px 24px;
+      background-color: #455A64;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background-color 0.2s;
+    }
+    button:hover {
+      background-color: #263238;
+    }
+    .main-content {
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+    .keyword-section {
+      border-radius: 8px;
+      padding: 15px;
+      min-height: 100px;
+    }
+    .section-0 { background-color: #E1F5FE; }
+    .section-1 { background-color: #FCE4EC; }
+    .section-2 { background-color: #E8F5E9; }
+
+    .section-header {
+      font-weight: bold;
+      font-size: 18px;
+      margin-bottom: 10px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+    }
+    .section-0 .section-header { color: #01579B; border-color: #B3E5FC; }
+    .section-1 .section-header { color: #880E4F; border-color: #F8BBD0; }
+    .section-2 .section-header { color: #1B5E20; border-color: #C8E6C9; }
+
+    .card {
+      background-color: white;
+      border-radius: 6px;
+      padding: 15px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      transition: transform 0.2s, background-color 0.2s;
+      cursor: pointer;
+      text-decoration: none;
+      display: block;
+      color: inherit;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      background-color: #FAFAFA;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .meta {
+      font-size: 12px;
+      color: #607D8B;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .badge-nikkei {
+      background-color: #FF9800;
+      color: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: bold;
+    }
+    .card-title {
+      font-weight: bold;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    .card-image {
+      width: 100%;
+      height: 200px;
+      object-fit: cover;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      background-color: #f0f0f0;
+      display: block;
+    }
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #78909C;
+      font-style: italic;
+    }
+    .error {
+      color: #D32F2F;
+      padding: 10px;
+      background: #FFEBEE;
+      border-radius: 4px;
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Keyword News Gadget</h1>
+    <div class="input-group">
+      <input type="text" id="kw1" value="人工知能" placeholder="Keyword 1">
+      <input type="text" id="kw2" value="電気自動車" placeholder="Keyword 2">
+      <input type="text" id="kw3" value="半導体" placeholder="Keyword 3">
+      <button onclick="refreshAll()">🔄 全て更新</button>
+    </div>
+  </header>
+
+  <div class="main-content">
+    <div id="section-0" class="keyword-section section-0">
+      <div class="section-header">キーワード 1</div>
+      <div class="content"></div>
+    </div>
+    <div id="section-1" class="keyword-section section-1">
+      <div class="section-header">キーワード 2</div>
+      <div class="content"></div>
+    </div>
+    <div id="section-2" class="keyword-section section-2">
+      <div class="section-header">キーワード 3</div>
+      <div class="content"></div>
+    </div>
+  </div>
+
+  <script>
+    function refreshAll() {
+      for (var i = 0; i < 3; i++) {
+        var keyword = document.getElementById('kw' + (i + 1)).value.trim();
+        updateSection(i, keyword);
+      }
+    }
+
+    function updateSection(index, keyword) {
+      var section = document.getElementById('section-' + index);
+      var header = section.querySelector('.section-header');
+      var content = section.querySelector('.content');
+
+      header.textContent = keyword ? '🔍 ' + keyword : '(空)';
+      content.innerHTML = '<div class="loading">Loading news...</div>';
+
+      if (!keyword) {
+        content.innerHTML = '';
+        return;
+      }
+
+      google.script.run
+        .withSuccessHandler(function(news) {
+          renderNews(index, news);
+        })
+        .withFailureHandler(function(err) {
+          content.innerHTML = '<div class="error">Error: ' + err.message + '</div>';
+        })
+        .getNews(keyword);
+    }
+
+    function renderNews(index, news) {
+      var section = document.getElementById('section-' + index);
+      var content = section.querySelector('.content');
+
+      if (!news) {
+        content.innerHTML = '<div class="error">Data load error.</div>';
+        return;
+      }
+
+      if (news.error) {
+        content.innerHTML = '<div class="error">' + news.error + '</div>';
+        return;
+      }
+
+      if (news.length === 0) {
+        content.innerHTML = '<div class="loading">記事が見つかりませんでした。</div>';
+        return;
+      }
+
+      var html = '';
+      for (var i = 0; i < news.length; i++) {
+        var item = news[i];
+        html += '<a href="' + item.link + '" target="_blank" class="card">' +
+                (item.image ? '<img src="' + item.image + '" class="card-image" onerror="this.style.display=\'none\'">' : '') +
+                '<div class="meta">' +
+                (item.isNikkei ? '<span class="badge-nikkei">日経優先</span>' : '') +
+                '<span>' + item.source + ' • ' + item.pubDate + '</span>' +
+                '</div>' +
+                '<div class="card-title">' + item.title + '</div>' +
+                '</a>';
+      }
+      content.innerHTML = html;
+    }
+
+    window.onload = refreshAll;
+  </script>
+</body>
+</html>
