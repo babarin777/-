@@ -2,44 +2,49 @@
 
 This project is a port of the Python news gadget to Google Apps Script. It provides a web app that displays latest news for 3 keywords, prioritizing Nikkei-related content.
 
-## Setup Instructions
+## ⚠️ 重要：Web表示が表示されない場合
 
-1.  **Create a New GAS Project**:
-    - Go to [script.google.com](https://script.google.com/).
-    - Click **New Project**.
-    - Rename the project to "Keyword News Gadget".
+GASエディタで「実行」ボタンを押しても、**Web画面は表示されません**。
+（「実行完了」というメッセージだけが出ますが、これは `doGet` 関数を単に実行しただけで、ブラウザで表示するのとは異なります）
 
-2.  **Add Files**:
-    - Copy the contents of `Code.gs` from this repository and paste it into the `Code.gs` file in the GAS editor.
-    - Click the **+** button next to "Files", select **HTML**, and name it `Index`.
-      - **CRITICAL**: The name must be exactly `Index` (case-sensitive).
+**Web画面を見るには、「デプロイ」した後に発行される「ウェブアプリのURL」にアクセスする必要があります。**
 
-3.  **Deploy as Web App**:
-    - Click **Deploy** > **New Deployment**.
-    - Select type **Web App**.
-    - Execute as: **Me**.
-    - Who has access: **Anyone** (or "Only myself").
-    - Click **Deploy**.
+## セットアップ手順（重要）
 
-4.  **Authorize**:
-    - Click **Review Permissions** and allow it.
-    - (If it says "Google hasn't verified this app", click "Advanced" and then "Go to Keyword News Gadget (unsafe)").
+1.  **GASプロジェクトを作成**:
+    - [script.google.com](https://script.google.com/) にアクセス。
+    - 「新しいプロジェクト」をクリック。
+    - プロジェクト名を「Keyword News Gadget」に変更。
 
-5.  **Access the App**:
-    - After deployment, you will get a **Web App URL**. Open this URL in your browser.
+2.  **ファイルを貼り付け**:
+    - `Code.gs` の内容をコピーして、GASエディタの `コード.gs` に貼り付け。
+    - 左側の「ファイル」横の「＋」をクリックして「HTML」を選択。名前を `Index` に変更（**大文字の I に注意**）。
+    - `Index.html` の内容をコピーして、今作った `Index.html` に貼り付け。
 
-## Troubleshooting
+3.  **ウェブアプリとしてデプロイ**:
+    - 右上の「デプロイ」＞「新しいデプロイ」をクリック。
+    - 種類の選択（歯車アイコン）で「ウェブアプリ」を選択。
+    - 「次のユーザーとして実行」：**自分**
+    - 「アクセスできるユーザー」：**全員**
+    - 「デプロイ」をクリック。
 
-- **Error: "Index" not found**:
-  - Make sure you created an HTML file and named it exactly `Index`.
-- **Empty Feed / Loading Stuck**:
-  - Check the **Execution Logs** in the GAS editor (left sidebar icon). Any errors during RSS fetching will be logged there.
-  - Sometimes Google News RSS is temporarily unavailable. Try again after a few minutes.
-- **Permission Denied**:
-  - Ensure you are signed into only one Google account in your browser, or open the Web App URL in an Incognito/Private window.
+4.  **承認**:
+    - 「アクセスを承認」をクリック。Googleアカウントを選択し、「詳細」＞「Keyword News Gadget（安全ではないページ）に移動」＞「許可」をクリック。
 
-## Features
-- **3 Keyword Input**: Input keywords to fetch matching latest news.
-- **Pale Color Theme**: Distinctive pale blue, pink, and green sections.
-- **Nikkei Priority**: Articles from "日本経済新聞" are sorted to the top.
-- **Responsive**: Works on desktop and mobile.
+5.  **WebアプリURLにアクセス（ここが本番！）**:
+    - デプロイ完了画面に表示される **「ウェブアプリのURL」** をコピーして、ブラウザの新しいタブに貼り付けて開いてください。
+
+## トラブルシューティング
+
+- **「実行」を押しても何も起きない**:
+  - それで正常です。「デプロイ」後の「ウェブアプリURL」を開くのが正しい方法です。
+- **「Index」が見つかりません**:
+  - HTMLファイルの名前が `Index`（先頭は大文字）になっているか確認してください。
+- **読み込みが止まる**:
+  - GASエディタの「実行ログ」を確認してください。エラー内容が表示されます。
+
+## 機能
+- **3キーワード入力**: 入力したキーワードで最新ニュースを取得。
+- **お洒落な淡い色テーマ**: 青・ピンク・緑のセクションで色分け。
+- **日経優先表示**: 「日本経済新聞」関連を最上位に、オレンジ色のバッジ付きで表示。
+- **レスポンス**: PCでもスマホでもブラウザから確認可能。

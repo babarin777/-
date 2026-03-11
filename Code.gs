@@ -1,4 +1,9 @@
 /**
+ * 【重要：Web表示の確認方法】
+ * GASエディタ上の「実行」ボタンを押してもWeb画面は表示されません。
+ * 右上の「デプロイ」ボタンから「新しいデプロイ」＞「ウェブアプリ」を選択して
+ * デプロイ後に発行される「ウェブアプリのURL」にアクセスしてください。
+ *
  * GET request handler to serve the UI.
  * Using createHtmlOutputFromFile to minimize template parsing errors.
  */
