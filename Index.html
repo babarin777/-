@@ -1,6 +1,7 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
+  <meta charset="UTF-8">
   <base target="_top">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
   <style>
@@ -123,6 +124,7 @@
       border-radius: 4px;
       margin-bottom: 12px;
       background-color: #f0f0f0;
+      display: block;
     }
     .loading {
       text-align: center;
@@ -167,16 +169,16 @@
 
   <script>
     function refreshAll() {
-      for (let i = 0; i < 3; i++) {
-        const keyword = document.getElementById('kw' + (i + 1)).value.trim();
+      for (var i = 0; i < 3; i++) {
+        var keyword = document.getElementById('kw' + (i + 1)).value.trim();
         updateSection(i, keyword);
       }
     }
 
     function updateSection(index, keyword) {
-      const section = document.getElementById('section-' + index);
-      const header = section.querySelector('.section-header');
-      const content = section.querySelector('.content');
+      var section = document.getElementById('section-' + index);
+      var header = section.querySelector('.section-header');
+      var content = section.querySelector('.content');
 
       header.textContent = keyword ? '🔍 ' + keyword : '(空)';
       content.innerHTML = '<div class="loading">Loading news...</div>';
@@ -197,36 +199,39 @@
     }
 
     function renderNews(index, news) {
-      const section = document.getElementById('section-' + index);
-      const content = section.querySelector('.content');
+      var section = document.getElementById('section-' + index);
+      var content = section.querySelector('.content');
+
+      if (!news) {
+        content.innerHTML = '<div class="error">Data load error.</div>';
+        return;
+      }
 
       if (news.error) {
         content.innerHTML = '<div class="error">' + news.error + '</div>';
         return;
       }
 
-      if (!news || news.length === 0) {
+      if (news.length === 0) {
         content.innerHTML = '<div class="loading">記事が見つかりませんでした。</div>';
         return;
       }
 
-      let html = '';
-      news.forEach(item => {
-        html += `
-          <a href="${item.link}" target="_blank" class="card">
-            ${item.image ? `<img src="${item.image}" class="card-image" onerror="this.style.display='none'">` : ''}
-            <div class="meta">
-              ${item.isNikkei ? '<span class="badge-nikkei">日経優先</span>' : ''}
-              <span>${item.source} • ${item.pubDate}</span>
-            </div>
-            <div class="card-title">${item.title}</div>
-          </a>
-        `;
-      });
+      var html = '';
+      for (var i = 0; i < news.length; i++) {
+        var item = news[i];
+        html += '<a href="' + item.link + '" target="_blank" class="card">' +
+                (item.image ? '<img src="' + item.image + '" class="card-image" onerror="this.style.display=\'none\'">' : '') +
+                '<div class="meta">' +
+                (item.isNikkei ? '<span class="badge-nikkei">日経優先</span>' : '') +
+                '<span>' + item.source + ' • ' + item.pubDate + '</span>' +
+                '</div>' +
+                '<div class="card-title">' + item.title + '</div>' +
+                '</a>';
+      }
       content.innerHTML = html;
     }
 
-    // Initial load
     window.onload = refreshAll;
   </script>
 </body>
