@@ -77,35 +77,41 @@ with col_cfg:
 
     target_url = st.text_input("1. アクセスするサイトURL",
                                placeholder="https://example.com/reserve",
-                               value="http://localhost:8000" if "jules" in sys.executable.lower() else "")
+                               value="http://localhost:8000" if "jules" in sys.executable.lower() else "",
+                               key="target_url")
 
     c1, c2 = st.columns(2)
     with c1:
-        st.caption("📅 カレンダー (月 火 水 木 金 土 日)")
-        stay_date = st.date_input("2. 宿泊希望日", datetime.date.today() + datetime.timedelta(days=7), label_visibility="collapsed")
+        st.caption("📅 カレンダー (S M T W T F S)")
+        stay_date = st.date_input("2. 宿泊希望日", datetime.date.today() + datetime.timedelta(days=7), label_visibility="collapsed", key="stay_date")
         st.markdown(f"**選択中:** {format_date_jp(stay_date)}")
     with c2:
-        num_guests = st.number_input("3. 利用人数", min_value=1, value=1, step=1, on_change=None)
+        num_guests = st.number_input("3. 利用人数", min_value=1, value=1, step=1, key="num_guests")
 
-    companion_names = st.text_area("4. 同行者名 (改行区切り)", placeholder="同行者1\n同行者2", height=100, on_change=None)
+    companion_names = st.text_area("4. 同行者名 (改行区切り)", placeholder="同行者1\n同行者2", height=100, key="companion_names")
 
     st.divider()
     st.subheader("⏰ 実行開始タイマー")
     e_col1, e_col2 = st.columns(2)
     with e_col1:
-        st.caption("📅 実行日")
-        exec_date = st.date_input("実行日ラベル", datetime.date.today(), label_visibility="collapsed")
+        st.caption("📅 実行日 (S M T W T F S)")
+        exec_date = st.date_input("実行日ラベル", datetime.date.today(), label_visibility="collapsed", key="exec_date")
     with e_col2:
         st.caption("⌚ 実行時刻 (HH:MM形式)")
-        exec_time_str = st.text_input("実行時刻ラベル", value="00:00", placeholder="例: 10:00", label_visibility="collapsed")
+        exec_time_str = st.text_input("実行時刻ラベル", value="00:00", placeholder="例: 10:00", label_visibility="collapsed", key="exec_time_str")
 
     # 時刻のバリデーション
-    try:
-        t_parts = exec_time_str.replace("：", ":").split(":")
-        exec_time = datetime.time(int(t_parts[0]), int(t_parts[1]))
-    except:
-        st.error("❌ 実行時刻の形式が正しくありません (例: 08:30)")
-        exec_time = datetime.time(0, 0)
+    exec_time = datetime.time(0, 0)
+    time_valid = False
+    if ":" in exec_time_str or "：" in exec_time_str:
+        try:
+            t_parts = exec_time_str.replace("：", ":").split(":")
+            exec_time = datetime.time(int(t_parts[0]), int(t_parts[1]))
+            time_valid = True
+        except:
+            st.error("❌ 実行時刻の形式が正しくありません (例: 08:30)")
+    else:
+        st.error("❌ 実行時刻を HH:MM 形式で入力してください。")
 
     scheduled_datetime = datetime.datetime.combine(exec_date, exec_time)
 
@@ -133,16 +139,18 @@ with col_confirm:
 
     # --- Control Buttons ---
     if not st.session_state.running:
+        st.write("") # スペース
         if st.button("🚀 上記の内容で実行予約（待機開始）", use_container_width=True, type="primary"):
             if not target_url:
                 st.error("サイトURLを入力してください。")
-            elif ":" not in exec_time_str:
-                st.error("実行時刻を正しく入力してください。")
+            elif not time_valid:
+                st.error("実行時刻を正しく入力（例: 08:30）してから実行してください。")
             else:
+                # 明示的に最新の値を記録
                 st.session_state.running = True
                 st.session_state.stop_requested = False
                 st.session_state.logs = []
-                add_log("実行待機を開始しました。")
+                add_log(f"実行待機を開始しました。(開始時刻: {format_time_jp(exec_time)})")
                 st.rerun()
     else:
         # Stop Button (Highly visible)
@@ -234,9 +242,22 @@ if st.session_state.running:
     async def main_loop():
         # 1. Wait for time
         now = datetime.datetime.now()
-        if scheduled_datetime > now:
-            wait_sec = (scheduled_datetime - now).total_seconds()
-            status_placeholder.warning(f"🕒 開始待機中... ({format_time_jp(exec_time)} 開始予定)")
+
+        # 実行時に最新の状態を取得
+        current_exec_time_str = st.session_state.exec_time_str
+        current_exec_date = st.session_state.exec_date
+
+        try:
+            t_p = current_exec_time_str.replace("：", ":").split(":")
+            e_t = datetime.time(int(t_p[0]), int(t_p[1]))
+        except:
+            e_t = datetime.time(0, 0) # Fallback
+
+        s_dt = datetime.datetime.combine(current_exec_date, e_t)
+
+        if s_dt > now:
+            wait_sec = (s_dt - now).total_seconds()
+            status_placeholder.warning(f"🕒 開始待機中... ({format_time_jp(e_t)} 開始予定)")
             pbar = st.progress(0)
             for i in range(int(wait_sec)):
                 if st.session_state.stop_requested: break
