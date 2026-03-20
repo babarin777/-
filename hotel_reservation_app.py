@@ -5,6 +5,7 @@ import datetime
 import time
 import threading
 from playwright.async_api import async_playwright
+from playwright_stealth import stealth_async
 import json
 import os
 import sys
@@ -198,14 +199,26 @@ CSSセレクタは、id、name、または一意に特定できる組合せを�
                 self.add_log("予約確定ボタンをクリックします...")
                 try:
                     await page.click(submit_selector)
-                    await page.wait_for_load_state("networkidle")
-                    self.add_log("予約確定リクエストを送信しました。完了画面を確認してください。")
+                    # Use both networkidle and a small wait to be safe
+                    try: await page.wait_for_load_state("networkidle", timeout=10000)
+                    except: pass
+
+                    # Heuristic check for success
+                    final_content = await page.content()
+                    success_keywords = ["完了", "確定しました", "予約を受け付けました", "予約番号", "Success", "Complete"]
+                    if any(kw in final_content for kw in success_keywords):
+                        self.add_log("【成功】予約完了が確認されました。")
+                    else:
+                        self.add_log("予約確定ボタンを押しました。完了画面を確認してください。")
                     return True
                 except Exception as e:
                     self.add_log(f"確定ボタンのクリックに失敗しました: {e}")
+                    return False # Retry if click failed due to navigation/closed
             else:
                 self.add_log("確定ボタンが見つかりませんでした。手動で操作してください。")
+                return True # Consider filled, but manual confirmation needed
 
+        self.add_log("自動確定がOFFのため、入力のみ完了しました。手動で予約を確定してください。")
         return True
 
     async def main_loop(self, url, api_key, exec_dt, stay_date, stay_count, adult_count, child_count, companion_name, auto_confirm):
@@ -221,13 +234,24 @@ CSSセレクタは、id、name、または一意に特定できる組合せを�
         retry_count = 0
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=False, channel="chrome")
-            if not browser: browser = await p.chromium.launch(headless=False)
-            context = await browser.new_context()
-            page = await context.new_page()
+            browser = None
+            context = None
+            page = None
 
             while datetime.datetime.now() < exec_start_time + RETRY_DURATION:
                 if self.stop_requested: break
+
+                # Check if browser/page is healthy, recreate if needed
+                if not browser or page.is_closed():
+                    if browser:
+                        try: await browser.close()
+                        except: pass
+                    self.add_log("ブラウザを起動します...")
+                    browser = await p.chromium.launch(headless=False, channel="chrome")
+                    if not browser: browser = await p.chromium.launch(headless=False)
+                    context = await browser.new_context()
+                    page = await context.new_page()
+                    await stealth_async(page)
 
                 try:
                     retry_count += 1
@@ -261,11 +285,11 @@ CSSセレクタは、id、name、または一意に特定できる組合せを�
                     success = await self.fill_and_submit(page, api_key, data_map, auto_confirm)
                     if success:
                         self.success = True
-                        self.add_log("処理が完了しました。ブラウザを確認してください。")
+                        self.add_log("情報の入力処理が正常に完了しました。")
                         # Keep open
                         while not self.stop_requested:
                             await asyncio.sleep(2)
-                            if await page.is_closed(): break
+                            if page.is_closed(): break
                         break
 
                 except Exception as e:
