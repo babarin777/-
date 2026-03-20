@@ -254,29 +254,43 @@ if st.session_state.running:
         # Gemini Logic
         if gemini_api_key:
             log("Geminiによるフォーム解析を開始します...")
-            elements = await page.query_selector_all("input:not([type='hidden']), textarea, select")
+            # ページ全体の構造をより深く理解させるための情報を収集
+            elements = await page.query_selector_all("input:not([type='hidden']), textarea, select, button")
             elements_info = []
             for el in elements:
                 if await el.is_visible():
+                    tag = await el.evaluate("el => el.tagName.toLowerCase()")
                     info_dict = {
-                        "tag": await el.evaluate("el => el.tagName.toLowerCase()"),
+                        "tag": tag,
                         "type": await el.get_attribute("type") or "",
                         "id": await el.get_attribute("id") or "",
                         "name": await el.get_attribute("name") or "",
                         "placeholder": await el.get_attribute("placeholder") or "",
                     }
-                    # Label context
-                    label_text = ""
-                    id_val = info_dict["id"]
-                    if id_val:
-                        label_el = await page.query_selector(f"label[for='{id_val}']")
-                        if label_el: label_text = await label_el.inner_text()
-                    if not label_text:
-                        label_text = await el.evaluate("""el => {
-                            let p = el.parentElement;
-                            return p ? p.innerText.substring(0, 50).replace(/\n/g, ' ') : '';
-                        }""")
-                    info_dict["context"] = label_text.strip()
+
+                    # 文脈情報を強化（ラベル、親のテキスト、直前のテキスト）
+                    context_text = await el.evaluate("""el => {
+                        let text = "";
+                        // ラベルを探す
+                        let id = el.id;
+                        if (id) {
+                            let label = document.querySelector(`label[for="${id}"]`);
+                            if (label) text += "Label: " + label.innerText + " | ";
+                        }
+                        // 親要素のテキスト（直近の項目名など）
+                        let p = el.parentElement;
+                        if (p) text += "Parent: " + p.innerText.substring(0, 100).replace(/\n/g, ' ') + " | ";
+                        // 直前のテキストノード
+                        let prev = el.previousSibling;
+                        if (prev && prev.nodeType === 3) text += "PrevText: " + prev.textContent.trim();
+                        return text;
+                    }""")
+
+                    info_dict["context"] = context_text.strip()
+                    # ボタンの場合はテキストも取得
+                    if tag == "button" or info_dict["type"] in ["button", "submit"]:
+                        info_dict["text"] = await el.inner_text()
+
                     elements_info.append(info_dict)
 
             mapping = await get_gemini_mapping(elements_info, info)
@@ -440,7 +454,10 @@ if st.session_state.running:
                     else:
                         add_log("フォームが見つかりません。リロードします。")
                 except Exception as e:
-                    add_log(f"エラー: {str(e).splitlines()[0]}")
+                    # エラーメッセージが空の場合や改行がない場合に備えて安全に取得
+                    err_lines = str(e).splitlines()
+                    err_msg = err_lines[0] if err_lines else "不明なエラー"
+                    add_log(f"エラー: {err_msg}")
 
                 await asyncio.sleep(3)
 
@@ -453,7 +470,8 @@ if st.session_state.running:
         asyncio.run(main_loop())
     except Exception as e:
         # トレースバックを画面に出さず、ログに記録して状態を戻す
-        err_msg = str(e).splitlines()[0]
+        err_lines = str(e).splitlines()
+        err_msg = err_lines[0] if err_lines else "不明なシステムエラー"
         add_log(f"システムエラーで停止しました: {err_msg}")
         st.session_state.running = False
         st.rerun()
