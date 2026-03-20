@@ -3,18 +3,44 @@ import datetime
 import time
 import asyncio
 import json
-import traceback
+import sys
+import os
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
-import sys
 
-# Set page config
-st.set_page_config(page_title="宿泊予約自動実行アプリ (高負荷対応版)", layout="wide")
+# --- Page Setup ---
+st.set_page_config(page_title="宿泊予約自動実行アプリ", layout="wide")
 
-st.title("宿泊予約自動実行アプリ (高負荷対応版)")
-st.write("指定したサイトに指定した時間にアクセスし、予約を完了するまで最大2時間リトライを続けます。")
+# --- Japanese Date Helpers ---
+JP_WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
 
-# Personal Information (Fixed)
+def format_date_jp(d):
+    if not d: return "未設定"
+    if isinstance(d, datetime.datetime):
+        d = d.date()
+    return f"{d.year}年{d.month:02d}月{d.day:02d}日({JP_WEEKDAYS[d.weekday()]})"
+
+def format_time_jp(t):
+    if not t: return "未設定"
+    return t.strftime("%H時%M分")
+
+# --- Session State Initialization ---
+if "running" not in st.session_state:
+    st.session_state.running = False
+if "stop_requested" not in st.session_state:
+    st.session_state.stop_requested = False
+if "logs" not in st.session_state:
+    st.session_state.logs = []
+
+def add_log(msg):
+    ts = datetime.datetime.now().strftime("%H:%M:%S")
+    st.session_state.logs.append(f"[{ts}] {msg}")
+
+# --- Header ---
+st.title("🏨 宿泊予約自動実行アプリ (安全停止対応版)")
+st.markdown("設定した時間に予約サイトへアクセスし、自動で情報を入力します。")
+
+# --- Personal Information (Fixed) ---
 PERSONAL_INFO = {
     "name": "馬場光浩",
     "name_kana": "ばばみつひろ",
@@ -24,192 +50,263 @@ PERSONAL_INFO = {
     "address": "千葉県松戸市新松戸３－１－２－６２２"
 }
 
-# --- Layout ---
-col_left, col_right = st.columns([1, 2])
-
-with col_left:
-    st.header("⚙️ 設定項目")
-    target_url = st.text_input("アクセスするサイトURL", placeholder="https://example.com/reserve", value="http://localhost:8000" if "jules" in sys.executable.lower() else "")
-    stay_date = st.date_input("宿泊希望日", datetime.date.today() + datetime.timedelta(days=7))
-    num_guests = st.number_input("利用人数", min_value=1, value=1)
-    companion_names = st.text_area("同行者名（改行区切り）", placeholder="同行者1\n同行者2")
-
-    st.divider()
-    st.subheader("⏰ 実行スケジュールの設定")
-    exec_date = st.date_input("実行日", datetime.date.today())
-    exec_time = st.time_input("実行時間", datetime.time(0, 0))
-    scheduled_datetime = datetime.datetime.combine(exec_date, exec_time)
-    st.info(f"予定日時: {scheduled_datetime.strftime('%Y-%m-%d %H:%M')}")
+# --- Sidebar: Constant Info & Advanced Settings ---
+with st.sidebar:
+    st.header("👤 代表者情報")
+    st.info(f"""
+    **お名前:** {PERSONAL_INFO['name']} ({PERSONAL_INFO['name_kana']})
+    **メール:** {PERSONAL_INFO['email']}
+    **電話:** {PERSONAL_INFO['phone']}
+    **住所:** {PERSONAL_INFO['address']}
+    """)
 
     st.divider()
-    st.subheader("🛠️ 詳細設定")
+    st.header("🛠️ 詳細設定")
     retry_duration_hours = st.slider("最大リトライ継続時間 (時間)", 0.5, 4.0, 2.0, 0.5)
-    custom_selectors_input = st.text_area("カスタムCSSセレクタ (JSON)", value="{}")
+    custom_selectors_input = st.text_area("カスタムCSSセレクタ (JSON)", value="{}", help="自動入力が失敗する場合にCSSセレクタを指定できます。")
 
-with col_right:
-    with st.expander("📖 動作説明・マニュアル (必ずお読みください)", expanded=False):
-        st.markdown("""
-        ### 1. 準備
-        このアプリを動かすには、Python環境と以下のライブラリが必要です。
-        - `pip install streamlit playwright playwright-stealth`
-        - `playwright install chromium` (初回のみ実行)
+    if st.button("ログをクリア"):
+        st.session_state.logs = []
+        st.rerun()
 
-        ### 2. 設定項目
-        - **サイトURL**: 予約フォームのURL、またはその直前のページを指定してください。
-        - **宿泊情報**: 人数や同行者名を入力します。
+# --- Main Columns ---
+col_cfg, col_confirm = st.columns([1.2, 1])
 
-        ### 3. 動作の流れ
-        1. 「待機開始」ボタンを押すと、指定時間までカウントダウンします。
-        2. 時間になるとブラウザ(Chrome優先)が起動し、サイトへアクセスを試みます。
-        3. **高負荷対策**: サイトが混雑して繋がらない場合やエラーが出た場合、自動でリトライを繰り返します。
-        4. フォームが見つかったら、馬場様の情報を自動入力します。
-        5. **完了確認**: 入力後、ブラウザは開いたままになります。最後の「予約確定」ボタンなどは、内容を最終確認した上でご自身で押してください。
-        """)
+with col_cfg:
+    st.subheader("⚙️ 予約・スケジュール設定")
 
-    col_info1, col_info2 = st.columns(2)
-    with col_info1:
-        st.subheader("👤 入力される個人情報")
-        st.json(PERSONAL_INFO)
-    with col_info2:
-        st.subheader("🏨 予約内容")
-        st.write(f"**宿泊日:** {stay_date}")
-        st.write(f"**人数:** {num_guests}名")
-        st.write(f"**同行者:** {companion_names if companion_names else 'なし'}")
+    target_url = st.text_input("1. アクセスするサイトURL",
+                               placeholder="https://example.com/reserve",
+                               value="http://localhost:8000" if "jules" in sys.executable.lower() else "")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        stay_date = st.date_input("2. 宿泊希望日", datetime.date.today() + datetime.timedelta(days=7))
+    with c2:
+        num_guests = st.number_input("3. 利用人数", min_value=1, value=1, step=1, on_change=None)
+
+    companion_names = st.text_area("4. 同行者名 (改行区切り)", placeholder="同行者1\n同行者2", height=100, on_change=None)
 
     st.divider()
-    status_area = st.empty()
-    log_area = st.expander("詳細ログ", expanded=True)
+    st.subheader("⏰ 実行開始タイマー")
+    e_col1, e_col2 = st.columns(2)
+    with e_col1:
+        exec_date = st.date_input("実行日", datetime.date.today())
+    with e_col2:
+        exec_time = st.time_input("実行時間", datetime.time(0, 0))
 
-    # Move logic outside the button block to keep state
-    if st.button("🚀 待機開始 / 実行", use_container_width=True, key="main_start_button"):
-        if not target_url:
-            st.error("URLを入力してください。")
-        else:
-            now = datetime.datetime.now()
-            if scheduled_datetime > now:
-                wait_seconds = (scheduled_datetime - now).total_seconds()
-                st.warning(f"実行時間まで待機します...")
-                pbar = st.progress(0)
-                st_rem = st.empty()
-                for i in range(int(wait_seconds)):
-                    time.sleep(1)
-                    rem = int(wait_seconds - i)
-                    pbar.progress((i+1)/wait_seconds)
-                    st_rem.text(f"開始まであと {rem} 秒...")
-                    if rem <= 0: break
-                st.success("実行時間になりました！")
+    scheduled_datetime = datetime.datetime.combine(exec_date, exec_time)
 
-            # Start loop
-            async def fill_form_best_effort(page, info, reservation_details, custom_selectors_json, log_container):
-                def log(msg): log_container.write(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}")
-                try:
-                    custom_map = json.loads(custom_selectors_json)
-                    for selector, val in custom_map.items():
-                        try:
-                            await page.fill(selector, str(val))
-                            log(f"✅ カスタムセレクタ '{selector}' に入力")
-                        except: pass
+    st.warning(f"**予定時刻:** {format_date_jp(exec_date)} {format_time_jp(exec_time)}")
+    st.caption("※予約開始の数分前に設定することをお勧めします。")
+
+with col_confirm:
+    st.subheader("✅ 最終確認パネル")
+
+    # ユーザーが変更した際、即座に視覚的に目立つようにカード形式で表示
+    confirmation_html = f"""
+    <div style="background-color: #fff2f2; padding: 20px; border-radius: 10px; border: 2px solid #ff4b4b; margin-bottom: 10px;">
+        <h3 style="margin-top:0; color: #ff4b4b;">⚠ 予約内容の確認</h3>
+        <p style="font-size: 1.2em; margin: 5px 0;">📅 <b>宿泊日:</b> <span style="color:red; font-weight:bold;">{format_date_jp(stay_date)}</span></p>
+        <p style="font-size: 1.2em; margin: 5px 0;">👥 <b>人数:</b> <span style="color:red; font-weight:bold;">{num_guests}名</span></p>
+        <p style="font-size: 1.0em; margin: 5px 0; color: #555;">🔗 <b>URL:</b> {target_url[:50] + "..." if len(target_url) > 50 else target_url}</p>
+        <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ccc;">
+        <p style="font-size: 1.1em; margin: 5px 0;">⏰ <b>実行開始:</b> {format_date_jp(scheduled_datetime)} {format_time_jp(exec_time)}</p>
+        <p style="font-size: 1.0em; margin: 5px 0;">👤 <b>代表者:</b> {PERSONAL_INFO['name']} 様</p>
+    </div>
+    """
+    st.markdown(confirmation_html, unsafe_allow_html=True)
+
+    st.info("💡 **ヒント:** 入力値を変更した後、**[Enter]キー**を押すか**入力欄の外をクリック**すると、上の確認パネルが更新されます。")
+
+    # --- Control Buttons ---
+    if not st.session_state.running:
+        if st.button("🚀 上記の内容で実行予約（待機開始）", use_container_width=True, type="primary"):
+            if not target_url:
+                st.error("サイトURLを入力してください。")
+            else:
+                st.session_state.running = True
+                st.session_state.stop_requested = False
+                st.session_state.logs = []
+                add_log("実行待機を開始しました。")
+                st.rerun()
+    else:
+        # Stop Button (Highly visible)
+        st.error("⚠️ 自動実行中...")
+        if st.button("🛑 実行を強制中断（ブラウザを閉じる）", use_container_width=True):
+            st.session_state.stop_requested = True
+            st.session_state.running = False # 即座にフラグを落とす
+            add_log("ユーザーにより中断リクエストが送信されました。")
+            st.rerun()
+
+# --- Log and Status Area ---
+st.divider()
+status_placeholder = st.empty()
+if st.session_state.running:
+    with st.expander("📝 リアルタイムログ", expanded=True):
+        log_placeholder = st.empty()
+        def update_log_ui():
+            log_placeholder.markdown("\n".join([f"- {l}" for l in st.session_state.logs[::-1]]))
+        update_log_ui()
+
+# --- Core Logic ---
+if st.session_state.running:
+    async def fill_form(page, reservation_details):
+        def log(m): add_log(m)
+        info = PERSONAL_INFO
+
+        # Custom selectors
+        try:
+            custom_map = json.loads(custom_selectors_input)
+            for selector, val in custom_map.items():
+                try: await page.fill(selector, str(val)); log(f"カスタム入力: {selector}")
                 except: pass
+        except: pass
 
-                async def fill_field(keywords, value):
-                    for kw in keywords:
-                        try:
-                            selectors = [f"input[placeholder*='{kw}']", f"input[name*='{kw}']", f"input[id*='{kw}']", f"textarea[name*='{kw}']"]
-                            for sel in selectors:
-                                el = await page.query_selector(sel)
-                                if el and await el.is_visible() and not (await el.input_value()):
-                                    await el.fill(value)
-                                    log(f"✅ '{kw}' 相当のフィールドに入力")
-                                    return True
-                            labels = await page.query_selector_all("label")
-                            for label in labels:
-                                if kw in (await label.inner_text()):
-                                    for_id = await label.get_attribute("for")
-                                    if for_id:
-                                        el = await page.query_selector(f"#{for_id}")
-                                        if el and not (await el.input_value()):
-                                            await el.fill(value)
-                                            log(f"✅ ラベル '{kw}' に基づき入力")
-                                            return True
-                        except: continue
-                    return False
+        async def attempt_fill(kws, val):
+            for kw in kws:
+                try:
+                    # Common input types
+                    selectors = [f"input[placeholder*='{kw}']", f"input[name*='{kw}']", f"input[id*='{kw}']", f"textarea[name*='{kw}']"]
+                    for sel in selectors:
+                        el = await page.query_selector(sel)
+                        if el and await el.is_visible() and not (await el.input_value()):
+                            await el.fill(val); log(f"入力成功: {kw}"); return True
+                    # Labels
+                    labels = await page.query_selector_all("label")
+                    for label in labels:
+                        if kw in (await label.inner_text()):
+                            for_id = await label.get_attribute("for")
+                            if for_id:
+                                el = await page.query_selector(f"#{for_id}")
+                                if el and not (await el.input_value()):
+                                    await el.fill(val); log(f"入力成功(ラベル): {kw}"); return True
+                except: continue
+            return False
 
-                log("フォーム入力を開始...")
-                if not await fill_field(["氏名", "お名前", "名前", "name"], info["name"]):
-                    await fill_field(["姓", "名字", "苗字"], info["name"][0:2])
-                    await fill_field(["名"], info["name"][2:])
-                if not await fill_field(["カナ", "かな", "ふりがな", "kana"], info["name_kana"]):
-                    await fill_field(["せい", "セイ", "姓カナ"], info["name_kana"][0:2])
-                    await fill_field(["めい", "メイ", "名カナ"], info["name_kana"][2:])
-                await fill_field(["メール", "email", "mail"], info["email"])
-                await fill_field(["電話", "tel", "phone"], info["phone"])
-                await fill_field(["郵便番号", "zip"], info["zip"])
-                await fill_field(["住所", "address"], info["address"])
-                await fill_field(["人数", "宿泊人数"], str(reservation_details["num_guests"]))
-                if reservation_details["companions"]:
-                    await fill_field(["同行者", "備考", "remark"], reservation_details["companions"])
+        log("フォームへの自動入力を開始します...")
+        # Name handling
+        if not await attempt_fill(["氏名", "お名前", "名前", "name"], info["name"]):
+            await attempt_fill(["姓", "名字", "苗字"], info["name"][:2])
+            await attempt_fill(["名"], info["name"][2:])
+        # Kana handling
+        if not await attempt_fill(["カナ", "かな", "ふりがな", "kana"], info["name_kana"]):
+            await attempt_fill(["せい", "セイ", "姓カナ"], info["name_kana"][:2])
+            await attempt_fill(["めい", "メイ", "名カナ"], info["name_kana"][2:])
 
-            async def run_reservation_loop(url, info, reservation_details, max_hours):
-                end_time = datetime.datetime.now() + datetime.timedelta(hours=max_hours)
-                async with async_playwright() as p:
-                    try:
-                        is_jules = "jules" in sys.executable.lower() or "/home/jules" in sys.executable.lower()
-                        browser = await p.chromium.launch(headless=is_jules, channel="chrome" if not is_jules else None)
-                    except:
-                        browser = await p.chromium.launch(headless=True if is_jules else False)
-                    context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/119.0.0.0 Safari/537.36")
-                    page = await context.new_page()
-                    # Apply stealth
-                    stealth_obj = Stealth()
-                    await stealth_obj.apply_stealth_async(page)
+        await attempt_fill(["メール", "email", "mail"], info["email"])
+        await attempt_fill(["電話", "tel", "phone"], info["phone"])
+        await attempt_fill(["郵便番号", "zip"], info["zip"])
+        await attempt_fill(["住所", "address"], info["address"])
+        await attempt_fill(["人数", "宿泊人数", "guest"], str(num_guests))
 
-                    attempt = 0
-                    while datetime.datetime.now() < end_time:
-                        attempt += 1
-                        current_time = datetime.datetime.now().strftime('%H:%M:%S')
-                        remaining = str(end_time - datetime.datetime.now()).split('.')[0]
-                        status_area.info(f"試行 {attempt} 回目: アクセス中... (時刻: {current_time}, 残り時間: {remaining})")
-                        try:
-                            response = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                            if response and (response.status >= 500 or response.status == 429):
-                                with log_area: st.error(f"[{current_time}] サーバーが混雑しています (Status: {response.status})。再試行します。")
-                                await asyncio.sleep(2); continue
-                            elif response and response.status >= 400:
-                                with log_area: st.warning(f"[{current_time}] エラー応答 (Status: {response.status})。")
-                            content = await page.content()
-                            if "メンテナンス中" in content or "ただいま混み合っております" in content:
-                                with log_area: st.warning(f"[{current_time}] 混雑/メンテナンス画面を検出。")
-                                await asyncio.sleep(5); continue
-                            found_form = False
-                            for _ in range(15):
-                                if (await page.query_selector("input")):
-                                    found_form = True; break
-                                await asyncio.sleep(1)
-                            if found_form:
-                                with log_area: st.success(f"[{current_time}] 予約フォームを検出。入力開始。")
-                                await fill_form_best_effort(page, info, reservation_details, custom_selectors_input, log_area)
-                                status_area.success("自動入力が完了しました！内容を確認して予約を確定させてください。")
-                                if is_jules:
-                                    # Verification environment: take a screenshot of the filled form before closing
-                                    await page.screenshot(path="/home/jules/verification/filled_form.png")
-                                    await browser.close()
-                                    return
-                                # Local environment: keep browser open for user confirmation
-                                while not page.is_closed():
-                                    try:
-                                        await asyncio.sleep(1)
-                                    except:
-                                        break
-                                return
-                            else:
-                                with log_area: st.warning(f"[{current_time}] フォーム未検出。リロード。")
-                        except Exception as e:
-                            with log_area: st.warning(f"[{current_time}] アクセス失敗: {str(e).splitlines()[0]}")
-                        await asyncio.sleep(2)
-                    status_area.error("制限時間内に予約を完了できませんでした。")
+        # Date fill
+        await attempt_fill(["宿泊日", "到着日", "チェックイン", "date"], stay_date.strftime("%Y-%m-%d"))
 
-            asyncio.run(run_reservation_loop(target_url, PERSONAL_INFO, {
-                "stay_date": stay_date,
-                "num_guests": num_guests,
-                "companions": companion_names
-            }, retry_duration_hours))
+        if companion_names:
+            await attempt_fill(["同行者", "備考", "remark"], companion_names)
+
+        log("自動入力が完了しました。")
+
+    async def main_loop():
+        # 1. Wait for time
+        now = datetime.datetime.now()
+        if scheduled_datetime > now:
+            wait_sec = (scheduled_datetime - now).total_seconds()
+            status_placeholder.warning(f"🕒 開始待機中... ({format_time_jp(exec_time)} 開始予定)")
+            pbar = st.progress(0)
+            for i in range(int(wait_sec)):
+                if st.session_state.stop_requested: break
+                time.sleep(1)
+                pbar.progress(min(1.0, (i+1)/wait_sec))
+                if i % 10 == 0: status_placeholder.warning(f"🕒 開始まであと {int(wait_sec - i)} 秒...")
+            if st.session_state.stop_requested:
+                st.session_state.running = False
+                st.session_state.stop_requested = False
+                st.rerun()
+            status_placeholder.success("🚀 実行時間になりました！")
+
+        # 2. Browser Loop
+        end_time = datetime.datetime.now() + datetime.timedelta(hours=retry_duration_hours)
+        async with async_playwright() as p:
+            is_jules = "jules" in sys.executable.lower() or "/home/jules" in sys.executable.lower()
+            try:
+                browser = await p.chromium.launch(headless=is_jules, channel="chrome" if not is_jules else None)
+            except:
+                browser = await p.chromium.launch(headless=True if is_jules else False)
+
+            context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/119.0.0.0 Safari/537.36")
+            page = await context.new_page()
+            await Stealth().apply_stealth_async(page)
+
+            attempt = 0
+            while datetime.datetime.now() < end_time:
+                if st.session_state.stop_requested: break
+                attempt += 1
+                status_placeholder.info(f"🔄 試行 {attempt} 回目: アクセス中... (残り時間: {str(end_time - datetime.datetime.now()).split('.')[0]})")
+
+                try:
+                    res = await page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
+                    if res and (res.status >= 500 or res.status == 429):
+                        add_log(f"サーバー混雑 (Status {res.status})。再試行します。")
+                        await asyncio.sleep(5); continue
+
+                    content = await page.content()
+                    if any(kw in content for kw in ["メンテナンス", "混み合って", "アクセスが集中"]):
+                        add_log("混雑画面を検出。5秒待機します。")
+                        await asyncio.sleep(5); continue
+
+                    # Search for input fields
+                    found = False
+                    for _ in range(10):
+                        if st.session_state.stop_requested: break
+                        if await page.query_selector("input"): found = True; break
+                        await asyncio.sleep(1)
+
+                    if found:
+                        add_log("予約フォームを検出しました。")
+                        await fill_form(page, {"stay_date": stay_date, "num_guests": num_guests})
+
+                        if is_jules:
+                            await page.screenshot(path="/home/jules/verification/filled_form_v3_fixed.png")
+                            await browser.close()
+                            st.session_state.running = False
+                            return
+
+                        status_placeholder.success("✨ 自動入力完了！内容を確認して予約を確定させてください。")
+                        add_log("ブラウザを開いたまま待機します。")
+                        while not page.is_closed():
+                            if st.session_state.stop_requested: break
+                            await asyncio.sleep(1)
+                        break
+                    else:
+                        add_log("フォームが見つかりません。リロードします。")
+                except Exception as e:
+                    add_log(f"エラー: {str(e).splitlines()[0]}")
+
+                await asyncio.sleep(3)
+
+            await browser.close()
+            st.session_state.running = False
+            st.session_state.stop_requested = False
+            st.rerun()
+
+    try:
+        asyncio.run(main_loop())
+    except Exception as e:
+        st.error(f"システムエラー: {e}")
+        st.session_state.running = False
+        st.rerun()
+
+if __name__ == "__main__":
+    # This allows running the script directly with `python hotel_reservation_app.py`
+    # and it will internally call `streamlit run`.
+    import sys
+    from streamlit.web import cli as stcli
+    if len(sys.argv) > 1 and sys.argv[1] == "run":
+        # Already running as streamlit
+        pass
+    else:
+        port = os.environ.get("STREAMLIT_SERVER_PORT", "8501")
+        sys.argv = ["streamlit", "run", sys.argv[0], f"--server.port={port}", "--server.address=0.0.0.0"]
+        sys.exit(stcli.main())
