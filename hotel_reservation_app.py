@@ -7,6 +7,7 @@ import sys
 import os
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
+import google.generativeai as genai
 
 # --- Page Setup ---
 st.set_page_config(page_title="宿泊予約自動実行アプリ", layout="wide")
@@ -62,6 +63,7 @@ with st.sidebar:
 
     st.divider()
     st.header("🛠️ 詳細設定")
+    gemini_api_key = st.text_input("Gemini API Key", type="password", help="AIによる高度なフォーム解析に使用します。未入力の場合は従来通りの解析を行います。")
     retry_duration_hours = st.slider("最大リトライ継続時間 (時間)", 0.5, 4.0, 2.0, 0.5)
     custom_selectors_input = st.text_area("カスタムCSSセレクタ (JSON)", value="{}", help="自動入力が失敗する場合にCSSセレクタを指定できます。")
 
@@ -182,9 +184,64 @@ if st.session_state.running or st.session_state.logs:
 
 # --- Core Logic ---
 if st.session_state.running:
+    async def get_gemini_mapping(elements_info, user_info):
+        if not gemini_api_key:
+            return None
+
+        try:
+            genai.configure(api_key=gemini_api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+
+            prompt = f"""
+            あなたは予約サイトの自動入力アシスタントです。
+            以下のフォーム要素のリストと、ユーザーの情報を元に、どの要素にどの値を入力すべきか判断し、JSON形式で返してください。
+
+            【ユーザー情報】
+            氏名: {user_info['name']} ({user_info['name_kana']})
+            メール: {user_info['email']}
+            電話: {user_info['phone']}
+            郵便番号: {user_info['zip']}
+            住所: {user_info['address']}
+            宿泊日: {user_info['stay_date']}
+            人数: {user_info['num_guests']}名
+            同行者: {user_info['companion_names']}
+
+            【フォーム要素】
+            {json.dumps(elements_info, ensure_ascii=False, indent=2)}
+
+            【出力形式】
+            {{
+              "mappings": [
+                {{"selector": "CSSセレクタ", "value": "入力値", "reason": "理由"}},
+                ...
+              ],
+              "submit_button": "送信または次へボタンのCSSセレクタ（確信が持てる場合のみ）"
+            }}
+
+            ※注意:
+            - CSSセレクタは正確に出力してください（idがある場合は #id を優先）。
+            - 該当するフィールドがない場合は含めないでください。
+            - 値は適切に加工（姓と名が分かれている場合は分割するなど）してください。
+            - JSONのみを返し、解説は不要です。
+            """
+
+            response = model.generate_content(prompt)
+            # JSON部分を抽出
+            text = response.text
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+
+            return json.loads(text.strip())
+        except Exception as e:
+            add_log(f"Gemini解析エラー: {e}")
+            return None
+
     async def fill_form(page, reservation_details):
         def log(m): add_log(m)
         info = PERSONAL_INFO
+        info.update(reservation_details)
 
         # Custom selectors
         try:
@@ -194,6 +251,68 @@ if st.session_state.running:
                 except: pass
         except: pass
 
+        # Gemini Logic
+        if gemini_api_key:
+            log("Geminiによるフォーム解析を開始します...")
+            elements = await page.query_selector_all("input:not([type='hidden']), textarea, select")
+            elements_info = []
+            for el in elements:
+                if await el.is_visible():
+                    info_dict = {
+                        "tag": await el.evaluate("el => el.tagName.toLowerCase()"),
+                        "type": await el.get_attribute("type") or "",
+                        "id": await el.get_attribute("id") or "",
+                        "name": await el.get_attribute("name") or "",
+                        "placeholder": await el.get_attribute("placeholder") or "",
+                    }
+                    # Label context
+                    label_text = ""
+                    id_val = info_dict["id"]
+                    if id_val:
+                        label_el = await page.query_selector(f"label[for='{id_val}']")
+                        if label_el: label_text = await label_el.inner_text()
+                    if not label_text:
+                        label_text = await el.evaluate("""el => {
+                            let p = el.parentElement;
+                            return p ? p.innerText.substring(0, 50).replace(/\n/g, ' ') : '';
+                        }""")
+                    info_dict["context"] = label_text.strip()
+                    elements_info.append(info_dict)
+
+            mapping = await get_gemini_mapping(elements_info, info)
+            if mapping and "mappings" in mapping:
+                log(f"Geminiが {len(mapping['mappings'])} 個のフィールドを特定しました。")
+                for item in mapping["mappings"]:
+                    try:
+                        sel = item["selector"]
+                        val = item["value"]
+                        # Check element type
+                        el = await page.query_selector(sel)
+                        if el:
+                            tag = await el.evaluate("el => el.tagName.toLowerCase()")
+                            if tag == "select":
+                                await el.select_option(label=val) if not val.isdigit() else await el.select_option(value=val)
+                            else:
+                                await el.fill(str(val))
+                            log(f"AI入力: {item.get('reason', sel)}")
+                    except Exception as e:
+                        log(f"AI入力失敗 ({sel}): {str(e)[:50]}")
+
+                # Submit button (optional)
+                if "submit_button" in mapping and mapping["submit_button"]:
+                    log(f"送信ボタン候補を特定: {mapping['submit_button']}")
+                    # 自動で押すのはリスクがあるため、スクロールして強調表示するに留める
+                    try:
+                        btn = await page.query_selector(mapping["submit_button"])
+                        if btn:
+                            await btn.scroll_into_view_if_needed()
+                            await btn.evaluate("el => el.style.border = '5px solid red'")
+                    except: pass
+
+                log("Geminiによる自動入力が完了しました。")
+                return # AI成功なら終了
+
+        # Fallback Heuristic
         async def attempt_fill(kws, val):
             for kw in kws:
                 try:
@@ -273,11 +392,12 @@ if st.session_state.running:
         # 2. Browser Loop
         end_time = datetime.datetime.now() + datetime.timedelta(hours=retry_duration_hours)
         async with async_playwright() as p:
-            is_jules = "jules" in sys.executable.lower() or "/home/jules" in sys.executable.lower()
+            # ユーザー環境ではブラウザを表示し、サーバー環境(jules)ではヘッドレスで動作させる
+            is_headless = "jules" in sys.executable.lower() or "/home/jules" in sys.executable.lower()
             try:
-                browser = await p.chromium.launch(headless=is_jules, channel="chrome" if not is_jules else None)
+                browser = await p.chromium.launch(headless=is_headless, channel="chrome" if not is_headless else None)
             except:
-                browser = await p.chromium.launch(headless=True if is_jules else False)
+                browser = await p.chromium.launch(headless=is_headless)
 
             context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/119.0.0.0 Safari/537.36")
             page = await context.new_page()
@@ -310,12 +430,6 @@ if st.session_state.running:
                     if found:
                         add_log("予約フォームを検出しました。")
                         await fill_form(page, {"stay_date": stay_date, "num_guests": num_guests})
-
-                        if is_jules:
-                            await page.screenshot(path="/home/jules/verification/filled_form_v3_fixed.png")
-                            await browser.close()
-                            st.session_state.running = False
-                            return
 
                         status_placeholder.success("✨ 自動入力完了！内容を確認して予約を確定させてください。")
                         add_log("ブラウザを開いたまま待機します。")
