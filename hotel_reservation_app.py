@@ -9,6 +9,7 @@ from playwright_stealth import stealth_async
 import json
 import os
 import sys
+import webbrowser
 
 # --- Fix for NotImplementedError on Windows ---
 if sys.platform == 'win32':
@@ -407,5 +408,21 @@ if __name__ == "__main__":
     from streamlit.web import cli as stcli
     from streamlit.runtime import exists
     if not exists():
+        port = "8501"
+        for arg in sys.argv:
+            if "--server.port=" in arg:
+                port = arg.split("=")[1]
+            elif arg == "--server.port" and sys.argv.index(arg) + 1 < len(sys.argv):
+                port = sys.argv[sys.argv.index(arg) + 1]
+
+        url = f"http://localhost:{port}"
+
+        # Open browser in a separate thread to wait for the server
+        def open_browser():
+            time.sleep(3)
+            webbrowser.open(url)
+
+        threading.Thread(target=open_browser, daemon=True).start()
+
         sys.argv = ["streamlit", "run", sys.argv[0]] + sys.argv[1:]
         sys.exit(stcli.main())
