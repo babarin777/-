@@ -81,7 +81,9 @@ with col_cfg:
 
     c1, c2 = st.columns(2)
     with c1:
-        stay_date = st.date_input("2. 宿泊希望日", datetime.date.today() + datetime.timedelta(days=7))
+        st.caption("📅 カレンダー (月 火 水 木 金 土 日)")
+        stay_date = st.date_input("2. 宿泊希望日", datetime.date.today() + datetime.timedelta(days=7), label_visibility="collapsed")
+        st.markdown(f"**選択中:** {format_date_jp(stay_date)}")
     with c2:
         num_guests = st.number_input("3. 利用人数", min_value=1, value=1, step=1, on_change=None)
 
@@ -91,9 +93,19 @@ with col_cfg:
     st.subheader("⏰ 実行開始タイマー")
     e_col1, e_col2 = st.columns(2)
     with e_col1:
-        exec_date = st.date_input("実行日", datetime.date.today())
+        st.caption("📅 実行日")
+        exec_date = st.date_input("実行日ラベル", datetime.date.today(), label_visibility="collapsed")
     with e_col2:
-        exec_time = st.time_input("実行時間", datetime.time(0, 0))
+        st.caption("⌚ 実行時刻 (HH:MM形式)")
+        exec_time_str = st.text_input("実行時刻ラベル", value="00:00", placeholder="例: 10:00", label_visibility="collapsed")
+
+    # 時刻のバリデーション
+    try:
+        t_parts = exec_time_str.replace("：", ":").split(":")
+        exec_time = datetime.time(int(t_parts[0]), int(t_parts[1]))
+    except:
+        st.error("❌ 実行時刻の形式が正しくありません (例: 08:30)")
+        exec_time = datetime.time(0, 0)
 
     scheduled_datetime = datetime.datetime.combine(exec_date, exec_time)
 
@@ -124,6 +136,8 @@ with col_confirm:
         if st.button("🚀 上記の内容で実行予約（待機開始）", use_container_width=True, type="primary"):
             if not target_url:
                 st.error("サイトURLを入力してください。")
+            elif ":" not in exec_time_str:
+                st.error("実行時刻を正しく入力してください。")
             else:
                 st.session_state.running = True
                 st.session_state.stop_requested = False
@@ -139,11 +153,20 @@ with col_confirm:
             add_log("ユーザーにより中断リクエストが送信されました。")
             st.rerun()
 
-# --- Log and Status Area ---
+# --- Status and Reason Display (Traceback replacement) ---
 st.divider()
 status_placeholder = st.empty()
-if st.session_state.running:
-    with st.expander("📝 リアルタイムログ", expanded=True):
+error_display_placeholder = st.empty()
+
+# 実行中でない場合でも、停止理由などがあれば表示
+if not st.session_state.running and st.session_state.logs:
+    last_log = st.session_state.logs[-1]
+    if "エラー" in last_log or "中断" in last_log or "失敗" in last_log:
+        error_display_placeholder.error(f"📋 直近の停止理由: {last_log}")
+
+# --- Log Area ---
+if st.session_state.running or st.session_state.logs:
+    with st.expander("📝 実行ログ・履歴", expanded=st.session_state.running):
         log_placeholder = st.empty()
         def update_log_ui():
             log_placeholder.markdown("\n".join([f"- {l}" for l in st.session_state.logs[::-1]]))
@@ -294,19 +317,24 @@ if st.session_state.running:
     try:
         asyncio.run(main_loop())
     except Exception as e:
-        st.error(f"システムエラー: {e}")
+        # トレースバックを画面に出さず、ログに記録して状態を戻す
+        err_msg = str(e).splitlines()[0]
+        add_log(f"システムエラーで停止しました: {err_msg}")
         st.session_state.running = False
         st.rerun()
 
 if __name__ == "__main__":
-    # This allows running the script directly with `python hotel_reservation_app.py`
-    # and it will internally call `streamlit run`.
     import sys
-    from streamlit.web import cli as stcli
-    if len(sys.argv) > 1 and sys.argv[1] == "run":
-        # Already running as streamlit
+    import streamlit.runtime as st_runtime
+
+    # すでにStreamlit環境下で動いているかチェック
+    if st_runtime.exists():
+        # メインロジック（上の st.title 等）は自動で実行されるため、ここでは何もしない
         pass
     else:
+        # python hotel_reservation_app.py として直接実行された場合、
+        # 内部的に streamlit run を呼び出してブラウザを起動する
+        from streamlit.web import cli as stcli
         port = os.environ.get("STREAMLIT_SERVER_PORT", "8501")
         sys.argv = ["streamlit", "run", sys.argv[0], f"--server.port={port}", "--server.address=0.0.0.0"]
         sys.exit(stcli.main())
