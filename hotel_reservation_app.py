@@ -8,6 +8,10 @@ import json
 import os
 import sys
 
+# --- Fix for NotImplementedError on Windows ---
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 # Try to import openai, install if missing
 try:
     import openai
@@ -68,7 +72,10 @@ class ReservationManager:
         self.input_ready_event.set()
 
     def _run_wrapper(self, args):
-        loop = asyncio.new_event_loop()
+        if sys.platform == 'win32':
+            loop = asyncio.ProactorEventLoop()
+        else:
+            loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(self.main_loop(*args))
