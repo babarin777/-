@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 import asyncio
 import datetime
 import time
@@ -64,14 +65,18 @@ class ReservationManager:
         self.input_ready_event.clear()
         self.success = False
         self.error = None
-        self.thread = threading.Thread(target=self._run_wrapper, args=(args,))
+
+        ctx = get_script_run_ctx()
+        self.thread = threading.Thread(target=self._run_wrapper, args=(args, ctx))
+        add_script_run_ctx(self.thread, ctx)
         self.thread.start()
 
     def stop(self):
         self.stop_requested = True
         self.input_ready_event.set()
 
-    def _run_wrapper(self, args):
+    def _run_wrapper(self, args, ctx):
+        if ctx: add_script_run_ctx(threading.current_thread(), ctx)
         if sys.platform == 'win32':
             loop = asyncio.ProactorEventLoop()
         else:
@@ -372,3 +377,11 @@ with log_area.container():
 if manager.running:
     time.sleep(2)
     st.rerun()
+
+# --- Launcher for direct execution ---
+if __name__ == "__main__":
+    from streamlit.web import cli as stcli
+    from streamlit.runtime import exists
+    if not exists():
+        sys.argv = ["streamlit", "run", sys.argv[0]] + sys.argv[1:]
+        sys.exit(stcli.main())
